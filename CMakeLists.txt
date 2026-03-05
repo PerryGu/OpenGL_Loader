@@ -169,20 +169,20 @@ if(WIN32)
     
     # Copy required DLLs to output directory
     # Always copy zlib.dll if it exists
-    if(EXISTS "${CMAKE_SOURCE_DIR}/zlib.dll")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/Dependencies/zlib.dll")
         add_custom_command(TARGET OpenGL_loader POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_SOURCE_DIR}/zlib.dll"
+                "${CMAKE_SOURCE_DIR}/Dependencies/zlib.dll"
                 "$<TARGET_FILE_DIR:OpenGL_loader>"
             COMMENT "Copying zlib.dll to output directory"
         )
     endif()
     
     # Copy Assimp DLL if available
-    if(DEFINED ASSIMP_DLL_NAME AND EXISTS "${CMAKE_SOURCE_DIR}/${ASSIMP_DLL_NAME}")
+    if(DEFINED ASSIMP_DLL_NAME AND EXISTS "${CMAKE_SOURCE_DIR}/Dependencies/${ASSIMP_DLL_NAME}")
         add_custom_command(TARGET OpenGL_loader POST_BUILD
             COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                "${CMAKE_SOURCE_DIR}/${ASSIMP_DLL_NAME}"
+                "${CMAKE_SOURCE_DIR}/Dependencies/${ASSIMP_DLL_NAME}"
                 "$<TARGET_FILE_DIR:OpenGL_loader>"
             COMMENT "Copying ${ASSIMP_DLL_NAME} to output directory"
         )

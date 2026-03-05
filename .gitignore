@@ -1,0 +1,78 @@
+# Build directories
+build/
+out/
+Debug/
+Release/
+*.vcxproj
+*.vcxproj.filters
+*.vcxproj.user
+*.sln
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+*.cmake
+!CMakeLists.txt
+!CMakeSettings.json
+
+# Compiled binaries
+*.exe
+*.dll
+*.lib
+*.a
+*.so
+*.dylib
+
+# Object files
+*.o
+*.obj
+*.pdb
+*.ilk
+*.exp
+
+# Precompiled headers
+*.pch
+*.gch
+
+# IntelliSense
+.vs/
+.vscode/
+*.VC.db
+*.VC.VC.opendb
+
+# Generated files
+app_settings.json
+imgui.ini
+*.log
+
+# Dependencies (if using FetchContent, these are auto-downloaded)
+_deps/
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# PowerShell scripts (development tools, not needed for distribution)
+*.ps1
+
+# Media files (if large, consider Git LFS)
+# Uncomment if media files are too large:
+# media/*.png
+# media/*.jpg
+# media/*.gif
+
+# Keep media directory structure
+!media/.gitkeep
+
+# Allow third-party compiled libraries in Dependencies
+!Dependencies/**/*.lib
+!Dependencies/**/*.dll

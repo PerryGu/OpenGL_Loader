@@ -1,0 +1,216 @@
+#version 440 core
+
+//-- Material ----------
+struct Material {
+	vec4 diffuse;
+	vec4 specular;
+	float shininess;
+};
+uniform sampler2D diffuse0;
+uniform sampler2D specular0;
+uniform Material material;
+
+//-- DirLight -------------
+struct DirLight {
+	vec3 direction;
+	vec4 ambient;
+	vec4 diffuse;
+	vec4 specular;
+};
+uniform DirLight dirLight;
+
+
+//-- PointLight -------------
+#define MAX_POINT_LIGHTS 20
+struct PointLight {
+	vec3 position;
+
+	float k0;
+	float k1;
+	float k2;
+
+	vec4 ambient;
+	vec4 diffuse;
+	vec4 specular;
+};
+uniform PointLight pointLights[MAX_POINT_LIGHTS];
+uniform int noPointLights;
+
+//-- SpotLight -------------
+#define MAX_SPOT_LIGHTS 20
+struct SpotLight {
+	vec3 position;
+	vec3 direction;
+
+	float k0;
+	float k1;
+	float k2;
+
+	float cutOff;
+	float outerCutOff;
+
+	vec4 ambient;
+	vec4 diffuse;
+	vec4 specular;
+};
+uniform SpotLight spotLights[MAX_SPOT_LIGHTS];
+uniform int noSpotLights;
+
+out vec4 FragColor;
+
+in vec3 FragPos;
+in vec3 Normal;
+in vec2 TextCoord;
+
+uniform int noTex;
+uniform vec3 viewPos;
+uniform int flipNormals;
+uniform int hasDiffuseTexture;
+uniform int useDefaultMaterial;
+
+vec4 calcDirLight(vec3 norm, vec3 viewDir, vec4 diffMap, vec4 specMap);
+vec4 calcPointLight(int idx, vec3 norm, vec3 viewDir, vec4 diffMap, vec4 specMap);
+vec4 calcSpotLight(int idx, vec3 norm, vec3 viewDir, vec4 diffMap, vec4 specMap);
+
+//-- Main --------------------------
+void main() {
+
+	vec3 norm = normalize(Normal);
+	if (flipNormals == 1) {
+		norm = -norm;
+	}
+	vec3 viewDir = normalize(viewPos - FragPos);
+
+	// Determine base material color (either from texture, default grey, or grey fallback for missing textures)
+	vec3 baseColor;
+	vec4 specMap;
+	
+	if (noTex == 1) {
+		baseColor = material.diffuse.rgb;
+		specMap = material.specular;
+	}
+	else {
+		// Maya-like behavior: Default Material toggle forces grey, otherwise use texture or grey fallback for missing
+		if (useDefaultMaterial == 1) {
+			baseColor = vec3(0.65, 0.65, 0.65); // Forced Maya grey
+		} else if (hasDiffuseTexture == 1) {
+			baseColor = texture(diffuse0, TextCoord).rgb; // Normal texture
+		} else {
+			baseColor = vec3(0.65, 0.65, 0.65); // Fallback: Grey for missing texture
+		}
+		specMap = texture(specular0, TextCoord);
+	}
+	
+	// Convert baseColor to vec4 for compatibility with existing lighting functions
+	vec4 diffMap = vec4(baseColor, 1.0);
+
+	//-- placeholde --
+	vec4 result;
+
+	//-- directional lighit ------
+	result = calcDirLight(norm, viewDir, diffMap, specMap);
+
+	//-- point Lights --------------
+	for (int i = 0; i < noPointLights; i++) {
+		result += calcPointLight(i, norm, viewDir, diffMap, specMap);
+	}
+
+	//-- spot Lights --------------
+	for (int i = 0; i < noSpotLights; i++) {
+		result += calcSpotLight(i, norm, viewDir, diffMap, specMap);
+	}
+
+
+	//- the out color --------------------
+	FragColor = result;
+
+}
+
+//-- DirLight -------------------------------
+vec4 calcDirLight(vec3 norm, vec3 viewDir, vec4 diffMap, vec4 specMap) {
+	//-- ambient ---
+	vec4 ambient = dirLight.ambient * diffMap;
+
+	//-- diffuse ----
+	vec3 lightDir = normalize(-dirLight.direction);
+	float diff = max(dot(norm, lightDir), 0.0);
+	vec4 diffuse = dirLight.diffuse * (diff * diffMap);
+
+	//-- specular ---
+	vec3 reflectDir = reflect(-lightDir, norm);
+	float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess * 128);
+	vec4 specular = dirLight.specular * (spec * specMap);
+
+	//- the out color --------------------
+	return vec4(ambient + diffuse + specular);
+
+}
+
+//-- PointLight -------------------------------
+vec4 calcPointLight(int idx, vec3 norm, vec3 viewDir, vec4 diffMap, vec4 specMap) {
+	//-- ambient ---
+	vec4 ambient = pointLights[idx].ambient * diffMap;
+
+	//-- diffuse ----
+	vec3 lightDir = normalize(pointLights[idx].position - FragPos);
+	float diff = max(dot(norm, lightDir), 0.0);
+	vec4 diffuse = pointLights[idx].diffuse * (diff * diffMap);
+
+	//-- specular ---
+	vec3 reflectDir = reflect(-lightDir, norm);
+	float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess * 128);
+	vec4 specular = pointLights[idx].specular * (spec * specMap);
+
+
+	//-- attenuation constants ----
+	float dist = length(pointLights[idx].position - FragPos);
+	float attenuation = 1.0 / (pointLights[idx].k0 + pointLights[idx].k1 * dist + pointLights[idx].k2 * (dist * dist));
+
+	//- the out color --------------------
+	return vec4(ambient + diffuse + specular) * attenuation;
+
+}
+
+//-- SpotLight -------------------------------
+vec4 calcSpotLight(int idx, vec3 norm, vec3 viewDir, vec4 diffMap, vec4 specMap) {
+
+	vec3 lightDir = normalize(spotLights[idx].position - FragPos);
+	float theta = dot(lightDir, normalize(-spotLights[idx].direction));
+
+	//-- ambient ---
+	vec4 ambient = spotLights[idx].ambient * diffMap;
+
+	//-- if in cutoff , render lightDir ---
+	if (theta > spotLights[idx].outerCutOff) { //-- because using cosines and not degrees --- 
+
+		//-- diffuse ----
+		float diff = max(dot(norm, lightDir), 0.0);
+		vec4 diffuse = spotLights[idx].diffuse * (diff * diffMap);
+
+
+		//-- specular ---
+		vec3 reflectDir = reflect(-lightDir, norm);
+		float spec = pow(max(dot(viewDir, reflectDir), 0.0), material.shininess * 128);
+		vec4 specular = spotLights[idx].specular * (spec * specMap);
+
+		float intesity = (theta - spotLights[idx].outerCutOff) / (spotLights[idx].cutOff - spotLights[idx].outerCutOff);
+		intesity = clamp(intesity, 0.0, 1.0);
+		diffuse *= intesity;
+		specular *= intesity;
+
+		//-- attenuation constants ----
+		float dist = length(spotLights[idx].position - FragPos);
+		float attenuation = 1.0 / (spotLights[idx].k0 + spotLights[idx].k1 * dist + spotLights[idx].k2 * (dist * dist));
+
+
+		//- the out color --------------------
+		return vec4(ambient + diffuse + specular) * attenuation;
+	}
+
+
+	//-- return just ambient -----
+	else {
+		return ambient;
+	}
+
+}

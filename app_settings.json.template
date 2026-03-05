@@ -1,0 +1,44 @@
+{
+    "camera": {
+        "focusPoint": [0.0, 0.0, 0.0],
+        "orbitDistance": 20.0,
+        "pitch": -20.0,
+        "position": [0.0, 5.0, 20.0],
+        "sensitivity": 1.0,
+        "smoothCameraEnabled": true,
+        "smoothTransitionSpeed": 5.0,
+        "speed": 2.5,
+        "yaw": -90.0,
+        "zoom": 45.0
+    },
+    "environment": {
+        "autoFocusEnabled": false,
+        "backgroundColor": [0.45, 0.55, 0.60, 1.0],
+        "boundingBoxesEnabled": true,
+        "farClipPlane": 5000.0,
+        "fpsScale": 1.5,
+        "framingDistanceMultiplier": 1.5,
+        "showFPS": false,
+        "skeletonLineWidth": 2.0,
+        "skeletonsEnabled": false,
+        "useGradient": true,
+        "viewportGradientBottom": [0.1, 0.15, 0.2],
+        "viewportGradientTop": [0.2, 0.3, 0.4],
+        "vSyncEnabled": true
+    },
+    "grid": {
+        "centerLineColor": [0.2, 0.2, 0.2],
+        "enabled": true,
+        "majorLineColor": [0.5, 0.5, 0.5],
+        "minorLineColor": [0.3, 0.3, 0.3],
+        "size": 100.0,
+        "spacing": 1.0
+    },
+    "recentFiles": [],
+    "window": {
+        "height": 1080,
+        "posX": 100,
+        "posY": 100,
+        "width": 1920
+    }
+}

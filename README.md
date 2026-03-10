@@ -5,13 +5,16 @@ OpenGL-based 3D model viewer and animation tool for loading, visualizing, and ma
 ## TL;DR
 
 - **Multi-Model Support**: Load and animate multiple FBX files simultaneously with independent animation states.
-- **Advanced Bone Manipulation**: Transform bones using PropertyPanel sliders or ImGuizmo 3D gizmo, featuring Maya-style shortcuts and automatic World-to-Local coordinate space conversion.
+- **Advanced Bone Manipulation**: Transform bones via PropertyPanel sliders or ImGuizmo 3D gizmo, featuring Maya-style shortcuts, arrow-key hierarchy navigation, and automatic World-to-Local coordinate space conversion.
 - **Granular Bone Picking**: Click individual bones directly in the viewport using distance-aware thresholds.
 - **Skeleton Visualization**: 3D sphere impostor joints with customizable line width and professional rendering.
 - **Animation System**: Independent playback per model with play/pause/stop controls and frame scrubbing.
 - **Auto-Focus Camera**: Automatically frames selected models/bones with smooth camera transitions.
 - **Professional UI**: Dockable ImGui panels (Viewport, Outliner, PropertyPanel, TimeSlider, DebugPanel) with JSON-based settings persistence.
-- **Performance Optimized**: Linear skeleton traversal (10x improvement) and efficient OpenGL resource caching.
+- **Performance Optimized**: Scalable architecture using **Hardware Instancing** for mass rendering, with efficient OpenGL resource management and optimized skeleton data structures.
+- **Massive Crowd Rendering**: Benchmark system capable of rendering thousands of animated characters with high frame rates using hardware-accelerated instancing.
+
+**Quick Demo:** For a quick evaluation without building from source, you can download the pre-compiled binary (.exe) and sample FBX models directly from the [Releases] tab.
 
 **Quick Start:**
 ```bash
@@ -25,23 +28,22 @@ cmake --build . --config Release
 
 <table>
 <tr>
-<td align="center">
-  <a href="YOUTUBE_VIDEO_1_URL">
-    <img src="https://img.youtube.com/vi/YOUTUBE_VIDEO_1_ID/maxresdefault.jpg" alt="Video 1" width="100%"/>
-  </a>
-  <br/>
-  <strong>Video 1 Title</strong>
+<td align="center" width="50%">
+<a href="https://www.youtube.com/watch?v=PET7pFCNu40">
+    <img src="https://img.youtube.com/vi/PET7pFCNu40/hqdefault.jpg" alt="OpenGL loader V1" width="100%"/>
+</a>
+<br/>
+<strong>OpenGL loader V1</strong>
 </td>
-<td align="center">
-  <a href="YOUTUBE_VIDEO_2_URL">
-    <img src="https://img.youtube.com/vi/YOUTUBE_VIDEO_2_ID/maxresdefault.jpg" alt="Video 2" width="100%"/>
-  </a>
-  <br/>
-  <strong>Video 2 Title</strong>
+<td align="center" width="50%">
+<a href="https://www.youtube.com/watch?v=vvX1MJm5k2c">
+    <img src="https://img.youtube.com/vi/vvX1MJm5k2c/hqdefault.jpg" alt="OpenGL loader V2" width="100%"/>
+</a>
+<br/>
+<strong>OpenGL loader V2</strong>
 </td>
 </tr>
 </table>
-
 ## Image Gallery
 
 ### Core Features
@@ -92,9 +94,12 @@ cmake --build . --config Release
 
 ## Overview
 
-OpenGL_Loader is a professional 3D model viewer and animation tool built with OpenGL, ImGui, and Assimp. It provides a comprehensive interface for loading, viewing, and animating multiple FBX files simultaneously, with advanced features for bone manipulation, skeleton visualization, and animation control.
+OpenGL_Loader is a professional 3D model viewer and animation tool built with OpenGL, ImGui, and Assimp. It provides a comprehensive interface for loading, viewing, and multiple FBX files simultaneously, with advanced features for bone manipulation, skeleton visualization.
 
-The application was originally developed to support the internal needs of my team at Intel, designed to provide a professional animation editing experience similar to industry-standard tools like Maya and Blender, with a focus on performance, usability, and visual quality. Unfortunately, the tool did not reach its final stages and production deployment as project priorities shifted and the decision was made to discontinue development.
+Inspired by tooling gaps and pipeline challenges I identified during my tenure as a CG Engineer at Intel, this personal project was developed entirely from scratch to provide a professional animation editing experience similar to industry-standard tools like Maya and Blender.
+
+Note on Compatibility: As development was frozen during the team's transition, the tool is primarily optimized for FBX versions 2016-2020. While it handles core rigging and skinning data effectively, newer FBX features or non-standard axis orientations (outside of Y-Up) may result in visual discrepancies. For the most stable experience, it is recommended to use the sample models provided in the /Assets directory.
+
 
 The system follows a clean architecture with clear separation of concerns:
 - **Graphics Layer**: Rendering, model loading, shader management, mathematical utilities
@@ -115,8 +120,11 @@ Load and display multiple FBX files simultaneously with independent animation st
 - Load multiple models via **File → Import** menu or drag-and-drop FBX files directly into the viewport
 - Each model maintains independent animation state (play/pause/stop)
 - Per-model root node transforms (isolated positioning)
-- Visual bounding boxes with selection-based color coding (cyan for selected, yellow for unselected)
+- Visual bounding boxes with (cyan for selected, yellow for unselected)
 - Per-model visibility controls (skeleton, bounding box toggles)
+- **Dual-Layer Visibility Control**: Toggle Skeleton, Bounding Box, Wireframe, and Normals globally (Tools menu) or per-model (PropertyPanel).
+- Granular Bone Manipulation Full transform control (translation, rotation, scale) for every individual bone in the hierarchy using 3D gizmos or numeric input
+
 
 **How to Use:**
 1. Launch `OpenGL_loader` - it automatically loads settings from `app_settings.json`
@@ -128,7 +136,7 @@ Load and display multiple FBX files simultaneously with independent animation st
 
 ### Animation System
 
-Professional animation playback with independent state per model.
+Professional animation playback.
 
 **Features:**
 - **Play/Pause Button (`>`)**: Toggles play state without resetting animation time (preserves current frame)
@@ -146,6 +154,24 @@ Professional animation playback with independent state per model.
 
 **Use Case**: Preview animations, analyze motion, or manually adjust bone transforms at specific frames.
 
+### Hardware Instancing & Benchmark
+
+A dedicated system for stress-testing and visualizing large-scale crowd simulations with full skeletal animation.
+
+**Features:**
+- **Hardware-Accelerated Instancing**: Utilizes `glDrawElementsInstanced` to render thousands of independent agents in a single draw call, significantly reducing CPU overhead.
+- **Heterogeneous Populations**: Support for spawning a multiple FBX models simultaneously.
+- **Real-Time Procedural Variation**: UI-controlled sliders for per-instance variation of Position (XZ jitter), Rotation (Y-axis), and Scale.
+- **Adaptive Spacing Logic**: Built-in spacing calculations to handle models of varying bounding box sizes within the same crowd.
+
+**How to Use:**
+1. Open the **Benchmark** tab in the Logger/Info panel.
+2. Select one or more models from the source list via checkboxes.
+3. Set the grid dimensions (Rows/Columns) and click **Spawn Benchmark Grid**.
+4. Adjust the **Randomization Controls** to add organic variation to the crowd.
+
+**Use Case**: Stress-test rendering performance, visualize crowd/city-scale scenes, or validate instancing pipelines with skeletal animation.
+
 ### Bone Manipulation
 
 Transform bones using PropertyPanel sliders or ImGuizmo 3D gizmo.
@@ -153,10 +179,12 @@ Transform bones using PropertyPanel sliders or ImGuizmo 3D gizmo.
 **Features:**
 - **PropertyPanel**: Precise numeric controls for translation, rotation, and scale
 - **ImGuizmo Gizmo**: Visual 3D manipulation with Maya-style shortcuts (W/E/R for translate/rotate/scale)
+- **Adjustable Gizmo Size**: Use +/- keys to dynamically scale the 3D gizmo.
 - **World-to-Local Conversion**: Automatic coordinate space conversion for rig roots
 - **Scale Compensation**: 1:1 gizmo movement regardless of object scale
 - **Transform Persistence**: Bone transforms saved in PropertyPanel bone maps
 - **Real-Time Updates**: Gizmo and PropertyPanel stay synchronized during manipulation
+- **Hierarchy Navigation**: Quickly traverse the skeletal structure using Up/Down arrow keys, providing a seamless workflow for bone selection and manipulation.
 
 **How to Use:**
 1. **PropertyPanel**: Use sliders for precise numeric control (Translation, Rotation, Scale)
@@ -175,12 +203,14 @@ Click individual bones in the viewport to select them directly.
 - **Ray-to-Segment Distance**: Mathematical calculation for accurate bone selection
 - **Visual Feedback**: Selected bone highlighted in Outliner and PropertyPanel
 - **Skeleton Requirement**: Bone picking only active when skeleton is visible
+- **Unified Hierarchy Navigation**: Use Arrow Keys (Up/Down) to traverse the skeleton.
+    The selection remains synchronized between the Viewport and the Outliner in real-time, regardless of which panel is focused
 
 **How to Use:**
 1. **Enable Skeleton**: Toggle skeleton visibility for the model (per-model checkbox or **Tools → Show Skeletons**)
 2. **Viewport Click**: Click directly on skeleton bones in the viewport (green lines, red joints)
 3. **Outliner Click**: Alternatively, click on bone names in the Outliner panel
-4. **Keyboard Navigation**: Use Arrow Keys (Up/Down) to navigate Outliner when viewport is hovered
+4. **Unified Hierarchy Navigation**: Use Arrow Keys (Up/Down) to traverse bones. Selection stays synced between Viewport and Outliner.
 
 **Use Case**: Quickly select bones for manipulation without navigating the Outliner hierarchy.
 
@@ -193,7 +223,7 @@ Professional 3D skeleton rendering with sphere impostor joints.
 - **Customizable Line Width**: Adjustable skeleton bone thickness (1.0 to 10.0)
 - **Proportional Joint Size**: Joint radius scales with line width for visual consistency
 - **Professional Lighting**: Fake 3D lighting creates realistic sphere appearance
-- **Performance Optimized**: Linear skeleton structure (10x performance improvement over hierarchical traversal)
+- **Optimized Skeleton Structure**: Linear skeleton data layout for efficient traversal and rendering
 
 **How to Use:**
 1. Enable skeleton visibility via **Tools → Show Skeletons** or per-model checkbox
@@ -212,12 +242,13 @@ Automatically frames selected models/bones with smooth camera transitions.
 - **Aspect Ratio Awareness**: Adjusts framing distance based on viewport aspect ratio
 - **Smooth Transitions**: Exponential interpolation for professional camera movement
 - **Bounding Box Based**: Uses model/bone bounding boxes for accurate framing
-- **Configurable Multiplier**: Adjustable framing distance multiplier (1.0 = tight, 10.0 = loose)
+- **Advanced Transition Control**: UI sliders for both "Framing Distance" (zoom offset) and "Transition Speed" (cinematic to snappy).
 
 **How to Use:**
 1. **Manual Framing**: Press 'F' key to auto-frame selected model/bone
-2. **Auto-Focus**: Enable **Tools → Auto Focus** to automatically frame when gizmo is released
-3. **Camera Controls**: 
+2. **Camera Settings**: Use the **Framing Distance** and **Speed** sliders in **Viewport Settings → Camera Framing** to fine-tune how the camera orbits and focuses on your selection.
+3. **Auto-Focus**: Enable **Tools → Auto Focus** to automatically frame when gizmo is released
+4. **Camera Controls**: 
    - **Orbit**: Alt + Left Mouse Button (drag)
    - **Zoom**: Mouse Wheel or Alt + Right Mouse Button (drag)
    - **Pan**: Alt + Middle Mouse Button (drag)
@@ -233,8 +264,15 @@ Dockable ImGui panels with comprehensive controls.
 - **Outliner**: Hierarchical view of all loaded models' bone structures with keyboard navigation
 - **PropertyPanel**: Transform controls for selected nodes with reset buttons
 - **TimeSlider**: Animation timeline with play/pause/stop controls and frame display
-- **DebugPanel**: Structured logging system with color-coded messages and filtering
-- **Viewport Settings**: Gradient background controls, skeleton line width, camera settings
+- **Logger / Info Panel**: A comprehensive, multi-tabbed diagnostic and testing hub featuring:
+  - **Event Log**: Structured logging system with color-coded filtering (Info/Warning/Error) and click-to-copy functionality.
+  - **Scene Info**: Real-time statistics displaying global polygon counts, alongside per-model metrics (polygons, bone count, animation duration, FPS).
+  - **Benchmark**: Dedicated control center for the Hardware Instancing system, featuring source model selection (single or multi-model mixing), grid dimension setup, auto-spacing calculations, and randomization controls (Position, Rotation, Scale jitter).
+- **Viewport Settings**: Comprehensive control panel for the rendering environment and visual aids, with all parameters automatically persisted to `app_settings.json`:
+  - **Grid Options**: Adjustable grid scale and line density parameters.
+  - **Environment**: Toggle gradient backgrounds with custom RGB color pickers and quick color presets.
+  - **Camera Controls**: Far clipping plane adjustment and smooth camera framing settings (Distance and Speed modifiers).
+  - **FPS & Skeleton**: V-Sync toggle, FPS counter scaling, and global skeleton line width adjustment.
 
 **Use Case**: Customize workspace layout, access all features quickly, or debug application behavior.
 
@@ -247,6 +285,7 @@ JSON-based configuration with automatic saving.
 - **Camera State**: Saves camera position, rotation, and zoom level
 - **Window Layout**: Preserves ImGui docking layout between sessions
 - **Environment Settings**: Gradient colors, skeleton line width, far clipping plane
+- **UI State Persistence**: Essential application states, including camera configuration, window layout, Outliner filters (Geometry, Animations, Rigs), and Logger levels (Info, Warning, Error), are automatically persisted to `app_settings.json`
 - **Auto-Save**: Throttled auto-save (60-second interval) prevents excessive disk writes
 - **Migration Logic**: Handles missing keys and invalid values with sensible defaults
 
@@ -258,10 +297,11 @@ JSON-based configuration with automatic saving.
 
 | Shortcut | Action |
 |----------|--------|
-| **W** | Switch gizmo to Translate mode |
-| **E** | Switch gizmo to Rotate mode |
-| **R** | Switch gizmo to Scale mode |
-| **F** | Frame selected model/bone (auto-focus) |
+| **W**   | Switch gizmo to Translate mode |
+| **E**   | Switch gizmo to Rotate mode |
+| **R**   | Switch gizmo to Scale mode |
+| **+ / -** | Increase / Decrease gizmo visual size |
+| **F**   | Frame selected model/bone (auto-focus) |
 | **Alt + Left Mouse** | Orbit camera |
 | **Alt + Right Mouse** | Zoom camera |
 | **Alt + Middle Mouse** | Pan camera |
@@ -271,8 +311,7 @@ JSON-based configuration with automatic saving.
 
 ------------------------------------------------------------------------
 
-<details>
-<summary><h2>Architecture</h2></summary>
+## Architecture
 
 The system follows a modular architecture with clear separation between graphics rendering, input handling, and application logic:
 
@@ -287,8 +326,9 @@ The system follows a modular architecture with clear separation between graphics
 - Linear skeleton optimization for performance
 - Bone picking via ray-to-segment distance calculation
 - Sphere impostor rendering for skeleton visualization
+- **Graceful Texture Fallback**: Automatically applies a default gray material to geometry when texture files are missing or paths are invalid, ensuring uninterrupted rendering.
 
-**Performance**: Linear skeleton structure provides 10x improvement over hierarchical traversal.
+**Performance**: Linear skeleton structure provides efficient traversal for animation and rendering.
 
 #### 2. ModelManager (`src/graphics/model_manager.h/cpp`)
 **Purpose**: Multi-model management with independent animation states
@@ -318,8 +358,7 @@ The system follows a modular architecture with clear separation between graphics
 
 **Key Features:**
 - Bone-based bounding box calculation (O(Bones) complexity)
-- Selection-based color coding (cyan for selected, yellow for unselected)
-- Line thickness variation for visual feedback
+- bounding box color coding (cyan for selected, yellow for unselected)
 - Per-model visibility control
 
 **Performance**: Bone-based calculation is ultra-fast compared to vertex iteration.
@@ -444,32 +483,32 @@ GPU per-vertex bone blending (shader)
 ### Architecture Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                    Application (main.cpp)                    │
-│  ┌──────────────────────┐  ┌──────────────────────────────┐ │
-│  │   Scene              │  │   ModelManager               │ │
-│  │   (IO Layer)         │  │   (Graphics Layer)          │ │
-│  │                      │  │                              │ │
-│  │  ┌────────────────┐  │  │  ┌────────────────────────┐  │ │
-│  │  │ Camera         │  │  │  │ ModelInstance[]        │  │ │
-│  │  │ (Controls)     │  │  │  │  ┌──────────────────┐  │  │ │
-│  │  └────────────────┘  │  │  │  │ Model           │  │  │ │
-│  │                      │  │  │  │  │ (FBX Data)     │  │  │ │
-│  │  ┌────────────────┐  │  │  │  │  └──────────────────┘  │  │ │
-│  │  │ UI Manager     │  │  │  │  └────────────────────────┘  │ │
-│  │  │  ├─ Outliner   │  │  │  │                              │ │
-│  │  │  ├─ Property   │  │  │  │  ┌────────────────────────┐  │ │
-│  │  │  │  Panel       │  │  │  │  │ Raycast                │  │ │
-│  │  │  ├─ TimeSlider │  │  │  │  │ (Selection)             │  │ │
-│  │  │  ├─ Gizmo      │  │  │  │  └────────────────────────┘  │ │
-│  │  │  └─ Viewport   │  │  │  │                              │ │
-│  │  └────────────────┘  │  │  └──────────────────────────────┘ │
-│  │                      │  │                                    │
-│  │  ┌────────────────┐  │  │  ┌──────────────────────────────┐ │
-│  │  │ AppSettings    │  │  │  │ Shader Manager               │ │
-│  │  │ (Persistence)  │  │  │  │ (Rendering)                  │ │
-│  │  └────────────────┘  │  │  └──────────────────────────────┘ │
-│  └──────────────────────┘  └──────────────────────────────────┘ │
+┌─────────────────────────────────────────────────────────────────┐
+│                    Application (main.cpp)                       │
+│  ┌──────────────────────┐  ┌─────────────────────────────────┐  │
+│  │   Scene              │  │   ModelManager                  │  │
+│  │   (IO Layer)         │  │   (Graphics Layer)              │  │
+│  │                      │  │                                 │  │
+│  │  ┌────────────────┐  │  │  ┌───────────────────────────┐  │  │
+│  │  │ Camera         │  │  │  │ ModelInstance[]           │  │  │
+│  │  │ (Controls)     │  │  │  │  ┌─────────────────────┐  │  │  │
+│  │  └────────────────┘  │  │  │  │ Model               │  │  │  │
+│  │                      │  │  │  │ (FBX Data)          │  │  │  │
+│  │  ┌────────────────┐  │  │  │  └─────────────────────┘  │  │  │
+│  │  │ UI Manager     │  │  │  └───────────────────────────┘  │  │
+│  │  │  ├─ Outliner   │  │  │                                 │  │
+│  │  │  ├─ Property   │  │  │  ┌───────────────────────────┐  │  │
+│  │  │  │  Panel      │  │  │  │ Raycast                   │  │  │
+│  │  │  ├─ TimeSlider │  │  │  │ (Selection)               │  │  │
+│  │  │  ├─ Gizmo      │  │  │  └───────────────────────────┘  │  │
+│  │  │  └─ Viewport   │  │  │                                 │  │
+│  │  └────────────────┘  │  │  ┌───────────────────────────┐  │  │
+│  │                      │  │  │ Shader Manager            │  │  │
+│  │  ┌────────────────┐  │  │  │ (Rendering)               │  │  │
+│  │  │ AppSettings    │  │  │  └───────────────────────────┘  │  │
+│  │  │ (Persistence)  │  │  └─────────────────────────────────┘  │
+│  │  └────────────────┘  │                                       │
+│  └──────────────────────┘                                       │
 └─────────────────────────────────────────────────────────────────┘
                               │
         ┌─────────────────────┼─────────────────────┐
@@ -478,13 +517,11 @@ GPU per-vertex bone blending (shader)
 │ OpenGL         │  │ GLFW             │  │ Assimp/openFBX   │
 │ (Rendering)    │  │ (Window)         │  │ (FBX Loading)    │
 │                │  │                  │  │                  │
-│ - Shaders      │  │ - Input Events   │  │ - Model Parsing   │
+│ - Shaders      │  │ - Input Events   │  │ - Model Parsing  │
 │ - VAO/VBO/EBO  │  │ - Window Mgmt    │  │ - Bone Hierarchy │
 │ - State Mgmt   │  │ - Context        │  │ - Animation Data │
 └────────────────┘  └──────────────────┘  └──────────────────┘
 ```
-
-</details>
 
 ------------------------------------------------------------------------
 
@@ -498,15 +535,21 @@ GPU per-vertex bone blending (shader)
 │   ├── 📁 graphics/           # Graphics rendering and model management
 │   │   ├── 📄 model.h/cpp     # Single model loading and rendering
 │   │   ├── 📄 model_manager.h/cpp  # Multi-model management
-│   │   ├── 📄 math3D.h/cpp   # Mathematical utilities
-│   │   ├── 📄 shader.h/cpp   # Shader management
-│   │   ├── 📄 grid.h/cpp     # Grid rendering
+│   │   ├── 📄 mesh.h/cpp      # Mesh data and processing
+│   │   ├── 📄 texture.h/cpp   # Texture loading and management
+│   │   ├── 📄 material.h/cpp  # Material properties
+│   │   ├── 📄 light.h/cpp     # Lighting system
+│   │   ├── 📄 math3D.h/cpp    # Mathematical utilities
+│   │   ├── 📄 shader.h/cpp    # Shader management
+│   │   ├── 📄 grid.h/cpp      # Grid rendering
 │   │   ├── 📄 bounding_box.h/cpp  # Bounding box rendering
-│   │   ├── 📄 raycast.h/cpp  # Raycasting for viewport selection
-│   │   └── 📄 defines.h      # Math constants
+│   │   ├── 📄 raycast.h/cpp   # Raycasting for viewport selection
+│   │   ├── 📄 utils.h         # Graphics utilities
+│   │   └── 📄 defines.h       # Math constants
 │   ├── 📁 io/                 # Input/Output and UI
 │   │   ├── 📄 scene.h/cpp    # Main scene management
 │   │   ├── 📄 camera.h/cpp   # Camera controls
+│   │   ├── 📄 joystick.h/cpp # Low-level joystick input
 │   │   ├── 📄 keyboard.h/cpp # Low-level keyboard input
 │   │   ├── 📄 mouse.h/cpp    # Low-level mouse input
 │   │   ├── 📄 app_settings.h/cpp  # Settings persistence
@@ -516,6 +559,7 @@ GPU per-vertex bone blending (shader)
 │   │       ├── 📄 property_panel.h/cpp  # Transform controls
 │   │       ├── 📄 timeSlider.h/cpp  # Animation timeline
 │   │       ├── 📄 gizmo_manager.h/cpp  # Gizmo manipulation
+│   │       ├── 📄 imgui_miniSliderV3.h # Custom ImGui slider widget
 │   │       ├── 📄 viewport_panel.h/cpp  # Viewport rendering
 │   │       ├── 📄 viewport_settings_panel.h/cpp  # Viewport settings
 │   │       ├── 📄 debug_panel.h/cpp  # Debug information
@@ -525,6 +569,7 @@ GPU per-vertex bone blending (shader)
 │   │   └── 📄 logger.h/cpp   # Logging system
 │   ├── 📄 application.h/cpp  # Main application class
 │   ├── 📄 main.cpp            # Application entry point
+│   ├── 📄 glad.c              # OpenGL loader initialization
 │   ├── 📄 viewport_selection.h/cpp  # Viewport selection manager
 │   └── 📄 version.h           # Version constants
 │
@@ -717,22 +762,36 @@ The tool is configured via `app_settings.json`:
 
 ### Configuration Parameters
 
-| Parameter | Description | Example |
+| Category | Parameter | Description |
 |-----------|-------------|---------|
-| `recentFiles` | Array of recently imported file paths (max 6) | `["F:/Models/character.fbx"]` |
-| `camera.position` | Camera world position (x, y, z) | `[0.0, 5.0, 20.0]` |
-| `camera.yaw` | Camera horizontal rotation (degrees) | `-90.0` |
-| `camera.pitch` | Camera vertical rotation (degrees) | `-20.0` |
-| `camera.zoom` | Camera field of view (degrees) | `45.0` |
-| `environment.useGradient` | Enable gradient background | `true` |
-| `environment.viewportGradientTop` | Top color for gradient (RGB) | `[0.2, 0.3, 0.4]` |
-| `environment.viewportGradientBottom` | Bottom color for gradient (RGB) | `[0.1, 0.15, 0.2]` |
-| `environment.skeletonLineWidth` | Skeleton bone thickness (1.0 to 10.0) | `2.0` |
-| `environment.farClipPlane` | Maximum clipping distance | `5000.0` |
-| `environment.framingDistanceMultiplier` | Camera framing distance multiplier | `1.5` |
-| `environment.autoFocusEnabled` | Enable auto-focus on gizmo release | `false` |
-| `environment.boundingBoxesEnabled` | Global bounding box visibility | `true` |
-| `environment.skeletonsEnabled` | Global skeleton visibility | `false` |
+| **Root** | `recentFiles` | Array of recently imported file paths |
+| **Camera** | `camera.position` | Camera world position (x, y, z) |
+| | `camera.focusPoint` | Camera target focus point (x, y, z) |
+| | `camera.yaw` / `pitch` | Camera horizontal and vertical rotation (degrees) |
+| | `camera.zoom` / `orbitDistance` | Camera field of view and distance from focus point |
+| | `camera.smoothCameraEnabled` | Toggles smooth exponential interpolation for camera movement |
+| | `camera.smoothTransitionSpeed` | Speed multiplier for smooth camera transitions |
+| | `camera.speed` / `sensitivity` | Base multipliers for manual camera movement and mouse sensitivity |
+| **Environment** | `environment.useGradient` | Toggles gradient vs. solid color background |
+| | `environment.backgroundColor` | Solid background color (RGBA) |
+| | `environment.currentPresetName` | Currently active background color preset |
+| | `environment.viewportGradientTop` / `Bottom` | Active gradient colors (RGB) |
+| | `environment.skeletonLineWidth` | Global thickness of skeleton bone rendering |
+| | `environment.farClipPlane` | Maximum clipping distance for the viewport |
+| | `environment.framingDistanceMultiplier` | Distance multiplier when auto-framing models/bones |
+| | `environment.autoFocusEnabled` | Toggles auto-framing on gizmo release |
+| | `environment.boundingBoxesEnabled` | Global visibility toggle for bounding boxes |
+| | `environment.skeletonsEnabled` | Global visibility toggle for skeletons |
+| | `environment.vSyncEnabled` | Locks framerate to monitor refresh rate |
+| | `environment.showFPS` / `fpsScale` | Toggles FPS counter visibility and controls text scale |
+| | `environment.lastImportDirectory` | Tracks the last directory used in the file dialog |
+| **Grid** | `grid.enabled` | Global visibility toggle for the floor grid |
+| | `grid.size` / `spacing` | Controls the overall dimensions and line density of the grid |
+| | `grid.centerLineColor` | RGB color for the center axes lines |
+| | `grid.majorLineColor` / `minorLineColor` | RGB colors for the primary and secondary grid lines |
+| **UI Layout** | `outliner.showGeometry` / `showAnimations` / `showRigGroups` | Toggles visibility filters in the Outliner panel |
+| | `logger.showInfo` / `showWarning` / `showError` | Saves the active filter states in the Logger panel |
+| | `window.width` / `height` / `posX` / `posY` | Restores the main application window size and position |
 
 ### Settings File Discovery
 
@@ -760,7 +819,11 @@ Recent files are automatically tracked with:
 
 ### Optimizations
 
-- **Linear Skeleton Structure**: 10x performance improvement over hierarchical traversal
+- **Hardware-Accelerated Instancing**: Massive crowd rendering optimization.
+  - **Single-Pass Rendering**: Efficiently renders thousands of animated characters with a single draw call.
+  - **GPU Memory Management**: Uses shared VBOs/EBOs to minimize overhead and maximize throughput.
+
+- **Linear Skeleton Structure**: Optimized flat skeleton layout for efficient traversal
   - Pre-computed flat array of bone transforms
   - O(Bones) complexity instead of O(Bones × Depth)
   - Eliminates recursive parent chain traversal during rendering
@@ -785,16 +848,13 @@ Recent files are automatically tracked with:
   - Avoids repeated divisions in AABB intersection tests
   - Critical for performance in bone picking hot path
 
-- **Double-Buffered Image Loading**: (Conceptual - for future image loading)
-  - Prevents flicker during rapid frame changes
-  - Smooth transitions with background loading
-
 ### Performance Metrics
 
+- **Massive Crowd Rendering**: Stable 60+ FPS with 1,000+ instanced animated characters (GPU dependent).
 - **Skeleton Rendering**: < 1ms for typical character (100 bones)
 - **Bone Picking**: < 5ms for ray-to-segment distance calculation
 - **Model Loading**: Varies by FBX complexity (typically 100-500ms)
-- **Animation Playback**: 60 FPS with multiple models
+- **Animation Playback**: Smooth frame rates with multiple models
 - **Memory Usage**: Minimal (~50MB base + ~10MB per model)
 
 </details>
@@ -805,20 +865,18 @@ Recent files are automatically tracked with:
 
 ### Core Libraries
 
-- **OpenGL 3.3+**: Graphics rendering API
+- **GLM 0.9.9.8**: Mathematics library (header-only)
 - **GLFW 3.3.8**: Window management and input handling
-- **GLAD**: OpenGL function loader
-- **GLM**: Mathematics library (header-only, vector/matrix operations)
 
 ### Model Loading
 
-- **Assimp**: FBX/OBJ model loading and parsing
-- **openFBX**: FBX file parsing (used by Assimp)
+- **Assimp 5.0.0**: FBX/OBJ model loading and parsing
+- **openFBX**: FBX file parsing (Lightweight standalone parser)
 
 ### UI Framework
 
-- **ImGui**: Immediate mode GUI framework
-- **ImGuizmo**: 3D gizmo manipulation widget
+- **ImGui 1.84.2**: Immediate mode GUI framework
+- **ImGuizmo 1.83**: 3D gizmo manipulation widget
 
 ### Build System
 
@@ -872,6 +930,12 @@ Recent files are automatically tracked with:
 - Check that texture paths in FBX are relative (not absolute)
 - Ensure texture file formats are supported (PNG, JPG, TGA)
 - Check Debug Panel for texture loading errors
+- Note: Geometry with missing textures will automatically be rendered with a default gray material to prevent rendering failures.
+
+**Issue: "Model loads but geometry is highly distorted or skinning is broken"**
+- Verify the FBX version of your asset. The underlying parsing libraries are optimized for FBX versions 2016-2020.
+- Newer FBX formats (2021+) or non-standard rigging techniques may cause skinning weight calculation errors during parsing.
+- **Solution**: Re-export the model from your DCC tool (Maya/Blender) using an older FBX export preset (e.g., FBX 2016/2017).
 
 ### Animation Issues
 
@@ -908,7 +972,7 @@ Recent files are automatically tracked with:
 - Try pressing 'F' key manually to trigger framing
 
 **Issue: "Camera movement is jittery"**
-- Check frame rate (should be 60 FPS)
+- Check that frame rate is stable
 - Verify VSync is enabled (Viewport Settings)
 - Reduce number of loaded models if performance is poor
 - Check Debug Panel for performance warnings
@@ -946,44 +1010,27 @@ Recent files are automatically tracked with:
 - Skeleton sphere impostor rendering
 - Gradient background system
 - Animation transport controls (separate pause/stop)
-- Linear skeleton optimization (10x performance)
+- Linear skeleton optimization
 - RAII resource management (move semantics)
 - Professional logging system
 - Settings persistence improvements
 
 ## Status
 
-Production-ready tool.  
-Designed for professional 3D model viewing, animation analysis, and bone manipulation.  
-Features comprehensive error handling, logging, and performance optimizations.
+**Technical Portfolio / Core Feature Complete**  
+This engine is designed to demonstrate advanced character animation and rendering techniques.
+
+**Important Note on Asset Compatibility:**
+* **Optimized for FBX 2016-2020**: The animation and skinning pipeline is fully stable within this range.
+* **Known Limitations**: Newer FBX versions or non-standard coordinate systems (outside of Y-Up) may result in visual discrepancies or skinning issues.
+* **Recommendation**: To evaluate the tool's performance and stability, it is highly recommended to use the verified sample models provided in the /Assets directory.
 
 ## License
 
-**PROPRIETARY - All Rights Reserved**
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-Copyright (c) 2024. All Rights Reserved.
+## Future Roadmap
 
-This software and associated documentation files (the "Software") are the 
-proprietary and confidential property of the copyright holder.
-
-### Restrictions
-
-- You may **NOT** copy, modify, distribute, publish, sell, or sublicense the Software
-- You may **NOT** reverse engineer, decompile, or disassemble the Software
-- You may **NOT** use the Software for commercial purposes without explicit written permission
-- You may **NOT** remove or alter any copyright notices
-
-### Permitted Use
-
-- Viewing the source code for portfolio/educational purposes
-- Reviewing the code structure and architecture for learning purposes
-
-### Disclaimer
-
-This Software is provided "AS IS", without warranty of any kind, express or 
-implied, including but not limited to the warranties of merchantability, 
-fitness for a particular purpose and noninfringement. In no event shall the 
-authors or copyright holders be liable for any claim, damages or other 
-liability, whether in an action of contract, tort or otherwise, arising from, 
-out of or in connection with the Software or the use or other dealings in the 
-Software.
+- **Asynchronous Asset Streaming**: Background loading using double-buffered image processing to prevent frame flicker.
+- **PBR Material Support**: Implementing Physically Based Rendering for enhanced visual fidelity.
+- **Vulkan Backend**: Exploring Vulkan integration for even lower-level hardware control.

@@ -1061,6 +1061,16 @@ This engine is designed to demonstrate advanced character animation and renderin
 * **Known Limitations**: Newer FBX versions or non-standard coordinate systems (outside of Y-Up) may result in visual discrepancies or skinning issues.
 * **Recommendation**: To evaluate the tool's performance and stability, it is highly recommended to use the verified sample models provided in the /Assets directory.
 
+## Contact & Author
+
+**Perry Guy** - Technical Artist & CG Engineer  
+*Extensive experience in 3D Graphics, Tool Development, and Performance Optimization (Intel, Mobileye).*
+
+📧 **Email**: [perryguy2@gmail.com](mailto:perryguy2@gmail.com)
+
+**YouTube Channel**: [@ThePerryGuy](https://www.youtube.com/@ThePerryGuy)
+
+
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.

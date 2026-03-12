@@ -44,6 +44,7 @@ cmake --build . --config Release
 </td>
 </tr>
 </table>
+
 ## Image Gallery
 
 ### Core Features

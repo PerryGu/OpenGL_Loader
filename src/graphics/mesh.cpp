@@ -12,6 +12,9 @@
 
 #include "mesh.h"
 #include "../utils/logger.h"
+#include <cstddef>  // For offsetof
+#include <string>   // For std::to_string
+#include <glad/glad.h>  // For OpenGL functions
 
 
 //-- generate list of vertices ------------------------
@@ -46,14 +49,22 @@ std::vector<Vertex> Vertex::genList(float* vertices, int noVertices) {
 //== constructors =====================================
 Mesh::Mesh() : VAO(0), VBO(0), EBO(0), noTex(false) {}
 
-Mesh::Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, std::vector<Texture> textures)
-    : vertices(vertices), indices(indices), textures(textures), noTex(false){
-    setup();
+Mesh::Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, std::vector<Texture> textures, bool deferSetup)
+    : vertices(vertices), indices(indices), textures(textures), VAO(0), VBO(0), EBO(0), noTex(false){
+    // CRITICAL: Do NOT call setup() if deferring GPU resource creation
+    // setup() contains OpenGL calls (glGenVertexArrays, glGenBuffers, etc.) that MUST run on main thread
+    if (!deferSetup) {
+        setup();
+    }
 }
 
-Mesh::Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, aiColor4D diffuse, aiColor4D specular)
-    : vertices(vertices), indices(indices), diffuse(diffuse), specular(specular), noTex(true) {
-    setup();
+Mesh::Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, aiColor4D diffuse, aiColor4D specular, bool deferSetup)
+    : vertices(vertices), indices(indices), diffuse(diffuse), specular(specular), VAO(0), VBO(0), EBO(0), noTex(true) {
+    // CRITICAL: Do NOT call setup() if deferring GPU resource creation
+    // setup() contains OpenGL calls (glGenVertexArrays, glGenBuffers, etc.) that MUST run on main thread
+    if (!deferSetup) {
+        setup();
+    }
 }
 
 //-- RAII: Move constructor (transfers GPU resource ownership) -----------
@@ -106,6 +117,12 @@ Mesh::~Mesh() {
 //-- render number of instances using shader --------------
 // Marked const because render() only reads mesh data and doesn't modify the mesh state
 void Mesh::render(Shader shader) const {
+    // Safety check: Don't render if VAO is not initialized (GPU resources not created yet)
+    if (VAO == 0) {
+        LOG_WARNING("[Mesh] Attempted to render mesh with uninitialized VAO (GPU resources not created)");
+        return;
+    }
+    
     // Check if mesh has at least one valid diffuse texture (with valid OpenGL ID)
     // This must be done before binding textures or VAO
     bool hasValidDiffuse = false;
@@ -132,10 +149,20 @@ void Mesh::render(Shader shader) const {
         
         unsigned int diffuseIdx = 0;
         unsigned int specularIdx = 0;
+        unsigned int textureUnit = 0; // Separate counter for texture units to avoid index mismatches
 
         for (unsigned int i = 0; i < textures.size(); i++) {
-            //-- activate texture -------------------
-            glActiveTexture(GL_TEXTURE0 + i);
+            // Skip textures with invalid IDs (not loaded or failed to load)
+            if (textures[i].id == 0) {
+                continue;
+            }
+
+            // Safety check: Ensure texture unit is within valid range before processing
+            // Limit to 16 texture units to be safe (GL_TEXTURE0 through GL_TEXTURE15)
+            if (textureUnit >= 16) {
+                LOG_ERROR("[Mesh] Too many texture units (max 16), skipping remaining textures");
+                break;
+            }
 
             //-- retrieve texture info (using pre-defined names to avoid std::to_string allocations) -------------
             const char* name = nullptr;
@@ -161,10 +188,36 @@ void Mesh::render(Shader shader) const {
             }
 
             if (name) {
+                // Double-check texture ID is still valid (defensive programming)
+                if (textures[i].id == 0) {
+                    LOG_WARNING("[Mesh] Texture ID became invalid, skipping");
+                    continue;
+                }
+                
+                //-- activate texture unit -------------------
+                // Check for OpenGL errors before making the call
+                GLenum error = glGetError();
+                if (error != GL_NO_ERROR) {
+                    LOG_ERROR("[Mesh] OpenGL error before glActiveTexture: " + std::to_string(error));
+                }
+                
+                glActiveTexture(GL_TEXTURE0 + textureUnit);
+                
+                // Check for errors after the call
+                error = glGetError();
+                if (error != GL_NO_ERROR) {
+                    LOG_ERROR("[Mesh] OpenGL error after glActiveTexture (unit " + std::to_string(textureUnit) + "): " + std::to_string(error));
+                    // Don't continue with this texture if there was an error
+                    continue;
+                }
+                
                 //-- set the shader value ------------
-                shader.setInt(name, i);
+                shader.setInt(name, textureUnit);
+                
                 //-- bind texture --------
                 textures[i].bind();
+                
+                textureUnit++; // Increment texture unit counter
             }
         }
     }
@@ -197,6 +250,10 @@ void Mesh::cleanup() {
 
 
 //-- setup data with buffers ---------------------------------
+// GPU-BOUND: This function runs ONLY on the main thread with valid OpenGL context.
+// It creates OpenGL resources (VAOs, VBOs, EBOs) and uploads pre-extracted vertex/index data.
+// All vertex/index data must already be populated in the vertices and indices vectors
+// (done in background thread during processMesh).
 void Mesh::setup() {
     // Validate input data before creating GPU resources
     if (vertices.empty()) {
@@ -252,6 +309,19 @@ void Mesh::setup() {
     glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(Vertex), (GLvoid*)offsetof(Vertex, boneWeights));
 
     glBindVertexArray(0);
+}
+
+// Create GPU resources (call after construction if deferSetup was true)
+// 
+// GPU-BOUND: This function runs ONLY on the main thread with valid OpenGL context.
+// It calls setup() which creates OpenGL resources using pre-extracted vertex/index data.
+// All CPU processing (vertex extraction, index generation) was done in the background thread.
+// Must be called on the main thread with valid OpenGL context
+void Mesh::createGPUResources() {
+    // Only call setup if resources haven't been created yet
+    if (VAO == 0) {
+        setup();
+    }
 }
 
 

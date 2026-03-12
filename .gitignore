@@ -18,7 +18,6 @@ CMakeFiles/
 cmake_install.cmake
 *.cmake
 !CMakeLists.txt
-!CMakeSettings.json
 
 # Compiled binaries
 *.exe
@@ -50,6 +49,10 @@ app_settings.json
 imgui.ini
 *.log
 
+# Local Visual Studio settings and IntelliSense
+CMakeSettings.json
+cpp.hint
+
 # Dependencies (if using FetchContent, these are auto-downloaded)
 _deps/
 
@@ -61,8 +64,12 @@ _deps/
 .DS_Store
 Thumbs.db
 
-# PowerShell scripts (development tools, not needed for distribution)
-*.ps1
+# Documentation and development scripts
+MD/
+scripts/
+
+# PowerShell scripts in root (keep root clean)
+/*.ps1
 
 # Media files (if large, consider Git LFS)
 # Uncomment if media files are too large:

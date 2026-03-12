@@ -31,7 +31,7 @@ struct Vertex {
 
 
     //-- generate list of vertices -----------
-    static std::vector<struct Vertex> genList(float* vertices, int noVertices);
+    static std::vector<Vertex> genList(float* vertices, int noVertices);
 
     //-- calculate tangent vectors for each face --------
     //static void calcTanVectors(std::vector<Vertex>& list, std::vector<unsigned int>& indices);
@@ -65,8 +65,12 @@ public:
     Mesh();
 
     //-- intialize with a bounding region -----------
-    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, std::vector<Texture> textures = {});
-    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, aiColor4D diffuse, aiColor4D specular);
+    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, std::vector<Texture> textures = {}, bool deferSetup = false);
+    Mesh(std::vector<Vertex> vertices, std::vector<unsigned int>& indices, aiColor4D diffuse, aiColor4D specular, bool deferSetup = false);
+    
+    // Create GPU resources (call after construction if deferSetup was true)
+    // Must be called on the main thread with valid OpenGL context
+    void createGPUResources();
 
     //-- RAII: Move constructor (transfers GPU resource ownership) -----------
     Mesh(Mesh&& other) noexcept;
@@ -85,6 +89,9 @@ public:
 
     //-- free up memory (legacy method, destructor handles cleanup automatically) ----------------
     void cleanup();
+    
+    //-- get noTex flag (for instanced rendering) --------------
+    bool getNoTex() const { return noTex; }
 
 private:
     //-- true if has only materials --------------------------------

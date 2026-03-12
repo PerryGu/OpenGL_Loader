@@ -36,8 +36,8 @@ cmake --build . --config Release
 <strong>OpenGL loader V1</strong>
 </td>
 <td align="center" width="50%">
-<a href="https://www.youtube.com/watch?v=vvX1MJm5k2c">
-    <img src="https://img.youtube.com/vi/vvX1MJm5k2c/hqdefault.jpg" alt="OpenGL loader V2" width="100%"/>
+<a href="https://www.youtube.com/watch?v=PPvJDx766N8">
+    <img src="https://img.youtube.com/vi/PPvJDx766N8/hqdefault.jpg" alt="OpenGL loader V2" width="100%"/>
 </a>
 <br/>
 <strong>OpenGL loader V2</strong>
@@ -90,13 +90,36 @@ cmake --build . --config Release
 </tr>
 </table>
 
+### Performance & Benchmark
+
+<table>
+<tr>
+<td align="center">
+  <img src="media/benchmark_info_v1.png" alt="Hardware Instancing Grid" width="100%"/>
+  <br/>
+  <strong>Massive Instance Grid</strong>
+</td>
+<td align="center">
+  <img src="media/benchmark_info_v2.png" alt="Mixed Model Benchmark" width="100%"/>
+  <br/>
+  <strong>Mixed Model Instancing</strong>
+</td>
+<td align="center">
+  <img src="media/my_12_years_old_pc.png" alt="12 Year Old PC Specs" width="100%"/>
+  <br/>
+  <strong>Benchmark Environment</strong>
+</td>
+</tr>
+</table>
+
 ------------------------------------------------------------------------
 
 ## Overview
 
-OpenGL_Loader is a professional 3D model viewer and animation tool built with OpenGL, ImGui, and Assimp. It provides a comprehensive interface for loading, viewing, and multiple FBX files simultaneously, with advanced features for bone manipulation, skeleton visualization.
+OpenGL_Loader is a professional 3D model viewer and animation tool built with OpenGL, ImGui, and Assimp. It provides a comprehensive interface for loading, viewing, and multiple FBX files simultaneously, with advanced features for bone manipulation and skeleton visualization.
 
-Inspired by tooling gaps and pipeline challenges I identified during my tenure as a CG Engineer at Intel, this personal project was developed entirely from scratch to provide a professional animation editing experience similar to industry-standard tools like Maya and Blender.
+### Project Inspiration
+This tool was inspired by a custom internal utility I developed for my team during my tenure as a CG Engineer at Intel. While the original tool served specific production needs, this personal project was rebuilt entirely from scratch to create a generalized, high-performance animation environment.
 
 Note on Compatibility: As development was frozen during the team's transition, the tool is primarily optimized for FBX versions 2016-2020. While it handles core rigging and skinning data effectively, newer FBX features or non-standard axis orientations (outside of Y-Up) may result in visual discrepancies. For the most stable experience, it is recommended to use the sample models provided in the /Assets directory.
 
@@ -305,7 +328,7 @@ JSON-based configuration with automatic saving.
 | **Alt + Left Mouse** | Orbit camera |
 | **Alt + Right Mouse** | Zoom camera |
 | **Alt + Middle Mouse** | Pan camera |
-| **Arrow Keys (Up/Down)** | Navigate Outliner (when viewport is hovered) |
+| **Arrow Keys (Up/Down)** | Navigate bone hierarchy through Outliner or Viewport |
 | **Double-click Outliner** | Select bone/node |
 | **Click Viewport** | Select model (or bone if skeleton visible) |
 
@@ -847,6 +870,18 @@ Recent files are automatically tracked with:
   - Inverse direction computed once during Ray construction
   - Avoids repeated divisions in AABB intersection tests
   - Critical for performance in bone picking hot path
+  
+  
+### Benchmark Environment
+All performance metrics and videos were recorded on a **12-year-old workstation** to demonstrate the engine's efficiency and optimization:
+
+| Hardware Component | Specification |
+|-------------------|---------------|
+| **CPU** | Intel Core i7-4790K @ 4.00GHz |
+| **GPU** | NVIDIA GeForce GTX 1070 (8GB) |
+| **RAM** | 16.0 GB DDR3 |
+
+<img src="media/my_12_years_old_pc.png" alt="PC Specifications" width="50%"/>
 
 ### Performance Metrics
 

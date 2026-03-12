@@ -40,7 +40,7 @@ void ViewportPanel::renderPanel(Scene* scene) {
             Grid* grid = scene->getGrid();
             if (grid != nullptr) {
                 bool gridEnabled = grid->isEnabled();
-                if (ImGui::MenuItem("Grid", NULL, &gridEnabled)) {
+                if (ImGui::Checkbox("Show Grid", &gridEnabled)) {
                     grid->setEnabled(gridEnabled);
                     // Save to settings
                     AppSettings& settings = AppSettingsManager::getInstance().getSettings();
@@ -55,8 +55,7 @@ void ViewportPanel::renderPanel(Scene* scene) {
                     // This ensures strict one-way control: global toggle is broadcaster only
                     bool globalDrawBoundingBoxes = modelManager->getBoundingBoxesEnabled();
                     
-                    // This block triggers ONLY when the user physically clicks the menu item
-                    if (ImGui::MenuItem("Bounding Boxes", "", &globalDrawBoundingBoxes)) {
+                    if (ImGui::Checkbox("Show Bounding Boxes", &globalDrawBoundingBoxes)) {
                         // Strict broadcaster: override all models to match the new master state
                         for (size_t i = 0; i < modelManager->getModelCount(); i++) {
                             ModelInstance* instance = modelManager->getModel(static_cast<int>(i));
@@ -79,8 +78,7 @@ void ViewportPanel::renderPanel(Scene* scene) {
                     // This ensures strict one-way control: global toggle is broadcaster only
                     bool globalShowSkeletons = modelManager->getSkeletonsEnabled();
                     
-                    // This block triggers ONLY when the user physically clicks the menu item
-                    if (ImGui::MenuItem("Show Skeletons", "", &globalShowSkeletons)) {
+                    if (ImGui::Checkbox("Show Skeletons", &globalShowSkeletons)) {
                         // Strict broadcaster: override all models to match the new master state
                         for (size_t i = 0; i < modelManager->getModelCount(); i++) {
                             ModelInstance* instance = modelManager->getModel(static_cast<int>(i));
@@ -101,7 +99,7 @@ void ViewportPanel::renderPanel(Scene* scene) {
                 
                 // Simple FPS counter toggle
                 bool showFPS = scene->getShowFPS();
-                if (ImGui::MenuItem("FPS Counter", NULL, &showFPS)) {
+                if (ImGui::Checkbox("Show FPS Counter", &showFPS)) {
                     // Checkbox state changed - update settings and save
                     scene->setShowFPS(showFPS);
                     AppSettings& settings = AppSettingsManager::getInstance().getSettings();
@@ -258,8 +256,27 @@ void ViewportPanel::renderSimpleFPS(Scene* scene) {
         lastUpdateTime = currentTime;
     }
     
-    // Display FPS in green using the locked value
-    ImGui::TextColored(ImVec4(0, 1, 0, 1), "%.0f", displayedFPS);
+    // Format FPS text with "FPS: " prefix
+    char fpsText[32];
+    sprintf_s(fpsText, sizeof(fpsText), "FPS: %.0f", displayedFPS);
+    
+    // Calculate text size for background rectangle
+    ImVec2 textSize = ImGui::CalcTextSize(fpsText);
+    
+    // Get current cursor position (where text will be drawn)
+    ImVec2 textPos = ImGui::GetCursorScreenPos();
+    
+    // Calculate background rectangle with padding
+    const float padding = 4.0f;  // Padding in pixels
+    ImVec2 rectMin = ImVec2(textPos.x - padding, textPos.y - padding);
+    ImVec2 rectMax = ImVec2(textPos.x + textSize.x + padding, textPos.y + textSize.y + padding);
+    
+    // Draw semi-transparent dark background rectangle for better readability
+    ImDrawList* drawList = ImGui::GetWindowDrawList();
+    drawList->AddRectFilled(rectMin, rectMax, IM_COL32(0, 0, 0, 180), 0.0f);  // Semi-transparent black (alpha = 180/255)
+    
+    // Display FPS text in green over the background
+    ImGui::TextColored(ImVec4(0, 1, 0, 1), "%s", fpsText);
     
     ImGui::End();
 }

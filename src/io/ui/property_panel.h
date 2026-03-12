@@ -79,6 +79,14 @@ class PropertyPanel
           mBoneScales.erase(nodeName);
       }
       
+      // Zero out transforms for a specific node by name (for deferred deletion)
+      // Sets translation to (0,0,0), rotation to (0,0,0), and scale to (1,1,1)
+      void zeroNodeTransforms(const std::string& nodeName);
+      
+      // Set RootNode translation directly by node name (for benchmark tool)
+      // This allows setting RootNode position without selecting the node first
+      void setRootNodeTranslation(const std::string& rootNodeName, const glm::vec3& translation);
+      
       // Check if "Reset All Bones" was requested (for clearing Model rotations)
       bool isResetAllBonesRequested() const { return mResetAllBonesRequested; }
       

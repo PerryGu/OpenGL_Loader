@@ -37,10 +37,16 @@ public:
     void addLog(const std::string& level, const std::string& message);
     
     /**
-     * Get all log entries
-     * @return Const reference to the vector of log entries
+     * Get all log entries (reference; may be invalidated by addLog from another path).
+     * Prefer getLogsCopy() when iterating over logs while other code may call addLog() (e.g. during load).
      */
     const std::vector<std::string>& getLogs() const { return m_logs; }
+    
+    /**
+     * Get a copy of all log entries under lock. Safe to iterate while addLog may be called.
+     * Use in UI (e.g. Event Log) to avoid use-after-free if logs are added during rendering.
+     */
+    std::vector<std::string> getLogsCopy() const;
     
     /**
      * Clear all log entries

@@ -188,12 +188,38 @@ public:
     //-- initialize method (to be overriden) -----------
     void init();
     void loadModel(std::string path);
+    
+    // Load model with deferred GPU resource creation (for async loading)
+    // CPU phase: File I/O and parsing (can run in background thread)
+    // After calling this, call createGPUResources() on the main thread to create OpenGL resources
+    void loadModelAsync(std::string path);
+    
+    // Create GPU resources for meshes (must be called on main thread with OpenGL context)
+    // Call this after loadModelAsync() completes to create VAOs, VBOs, etc.
+    // DEPRECATED: Use uploadNextMeshToGPU() for time-sliced incremental uploading instead
+    void createGPUResources();
+    
+    // Time-sliced incremental GPU upload (uploads one mesh per call)
+    // Returns true when all meshes and textures are uploaded, false otherwise
+    // Must be called on main thread with valid OpenGL context
+    // Call this EXACTLY ONCE per frame until it returns true
+    // meshesUploaded and texturesUploaded are output parameters tracking progress
+    bool uploadNextMeshToGPU(int& meshesUploaded, int& texturesUploaded);
 
 
     //-- render instance(s) --------------
     // If customModelMatrix is provided (not nullptr), it will be used instead of building from pos/rotation/size
     // This allows external control of the model transform (e.g., from PropertyPanel RootNode)
     void render(Shader shader, const glm::mat4* customModelMatrix = nullptr);
+    
+    //-- render instanced (for hardware instancing) --------------
+    // Renders the model multiple times using GPU instancing
+    // count: Number of instances to render
+    void renderInstanced(Shader& shader, int count);
+    
+    //-- get meshes (for instancing setup) --------------
+    // Returns const reference to meshes vector for setting up instance attributes
+    const std::vector<Mesh>& getMeshes() const { return meshes; }
     
     //-- draw skeleton (bone hierarchy as lines) --------------
     // Draws the skeleton using the exact same modelMatrix used by the viewport/gizmo
@@ -229,6 +255,9 @@ public:
     //-- get total polygon count (sum of all mesh indices / 3) ----
     size_t getPolygonCount() const;
     
+    //-- get total bone/joint count ----
+    unsigned int getBoneCount() const;
+    
     //-- get bounding box for all meshes ----
     void getBoundingBox(glm::vec3& min, glm::vec3& max);
     
@@ -240,8 +269,6 @@ public:
     void getBoundingBoxWithBones(glm::vec3& min, glm::vec3& max, const std::vector<glm::mat4>& boneTransforms);
     
     //-- get bounding box for a specific node by name (DEPRECATED - use index-based version) ----
-    void getBoundingBoxForNode(const std::string& nodeName, glm::vec3& min, glm::vec3& max);
-    
     //-- get bounding box for a specific bone by index (OPTIMIZED - zero string operations) ----
     void getBoundingBoxForBoneIndex(int boneIndex, glm::vec3& min, glm::vec3& max);
     
@@ -340,6 +367,9 @@ protected:
 
     //-- process mesh in object file -----------------
     Mesh processMesh(const aiMesh* mesh, const aiScene* scene);
+    
+    // Flag to track if we're in async loading mode (defer GPU resource creation)
+    bool m_deferGPUResources = false;
 
     //-- load list of textures ------------------
     std::vector<Texture> loadTextures(aiMaterial* mat, aiTextureType type);

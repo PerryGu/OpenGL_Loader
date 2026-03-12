@@ -81,6 +81,20 @@ struct AppSettings {
         bool vSyncEnabled = true;
     } environment;
     
+    // Outliner panel filter checkboxes (persisted to app_settings.json)
+    struct OutlinerSettings {
+        bool showGeometry = true;
+        bool showAnimations = true;
+        bool showRigGroups = true;
+    } outliner;
+    
+    // Logger/Debug panel filter checkboxes (persisted to app_settings.json)
+    struct LoggerSettings {
+        bool showInfo = true;
+        bool showWarning = true;
+        bool showError = true;
+    } logger;
+    
     // Recent files (up to 6)
     std::vector<std::string> recentFiles;
     static const int MAX_RECENT_FILES = 6;

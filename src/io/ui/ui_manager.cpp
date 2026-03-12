@@ -243,17 +243,41 @@ void UIManager::renderEditorUI(Scene* scene) {
             if (modelManager != nullptr) {
                 int selectedIdx = modelManager->getSelectedModelIndex();
                 if (selectedIdx >= 0) {
-                    // Log the deletion action before removing the model
-                    LOG_INFO("UI Action: Deleted model");
+                    // Log the deletion action
+                    LOG_INFO("UI Action: Deleted model (deferred deletion)");
                     
-                    // 1. Remove from Outliner FIRST (needs the index before it shifts)
+                    // DEFERRED DELETION: Zero out transforms first, then flag for deletion at end of frame
+                    // This allows one frame to pass so ImGui state and rendering matrices synchronize to zeroed values
+                    
+                    // 1. Get RootNode name for this model (needed to zero its transforms)
+                    std::string rootNodeName = mOutliner.getRootNodeName(selectedIdx);
+                    
+                    // 2. Zero out the model's RootNode transforms in PropertyPanel
+                    // This ensures the UI reads zeroed values for one frame before deletion
+                    if (!rootNodeName.empty()) {
+                        mPropertyPanel.zeroNodeTransforms(rootNodeName);
+                    }
+                    
+                    // 3. Remove from Outliner FIRST (needs the index before it shifts)
                     mOutliner.removeFBXScene(selectedIdx);
-                    // 2. Clear scene selection tracking
+                    
+                    // 4. Clear scene selection tracking
                     scene->resetSelectionTracking();
-                    // 3. Remove from ModelManager
-                    modelManager->removeModel(selectedIdx);
-                    // 4. Clear selection globally
+                    
+                    // 5. Clear selection globally (before deletion)
                     modelManager->setSelectedModel(-1);
+                    
+                    // 6. Reset PropertyPanel UI transform variables to prevent next model from inheriting transforms
+                    // Clear the active selection first (this also sets selectedBoneIndex to -1)
+                    mPropertyPanel.setSelectedNode("", nullptr);
+                    // Reset cached transform values to defaults
+                    mPropertyPanel.setSliderRotations(glm::vec3(0.0f, 0.0f, 0.0f));
+                    mPropertyPanel.setSliderTranslations(glm::vec3(0.0f, 0.0f, 0.0f));
+                    mPropertyPanel.setSliderScales(glm::vec3(1.0f, 1.0f, 1.0f));
+                    
+                    // 7. Flag model for deferred deletion (actual deletion happens at end of frame)
+                    // DO NOT call modelManager->removeModel() here - it will be called at end of frame
+                    scene->setPendingDeleteModelIndex(selectedIdx);
                 }
             }
             ImGui::CloseCurrentPopup();
@@ -271,7 +295,7 @@ void UIManager::renderEditorUI(Scene* scene) {
     // Render Debug Panel if visible
     if (m_showDebugPanel) {
         ModelManager* modelManager = scene->getModelManager();
-        m_debugPanel.renderPanel(&m_showDebugPanel, modelManager);
+        m_debugPanel.renderPanel(&m_showDebugPanel, modelManager, &mPropertyPanel, &mOutliner);
     }
 }
 
@@ -436,6 +460,7 @@ void UIManager::ShowAppMainMenuBar(Scene* scene)
                 mFileDialog.Open();
                 LOG_INFO("UI Action: File -> Import");
             }
+            ImGui::Separator();
             if (ImGui::MenuItem("Logger / Info", NULL)) { m_showDebugPanel = !m_showDebugPanel; }
             
             // Separator before Save Settings

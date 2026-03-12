@@ -43,6 +43,9 @@ private:
     void syncTransforms();
     void renderFrame();
     
+    // Helper to initialize a loaded model (bounding box, outliner, property panel, etc.)
+    void initializeLoadedModel(int modelIndex, const std::string& filePath);
+    
     // Systems
     GLFWwindow* m_window;
     Scene m_scene;

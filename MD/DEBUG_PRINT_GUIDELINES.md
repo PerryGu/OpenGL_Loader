@@ -3,8 +3,24 @@
 ## Overview
 This document describes the guidelines for debug output in the OpenGL_loader project. Debug prints should be action-based, not frame-based or time-based.
 
+## User Preference (Strict)
+
+When adding "print to the debug window" or any debug/log output:
+
+- **Do** print on **specific actions only**, e.g.:
+  - Every time the user **clicks the mouse** (viewport, outliner, button, etc.)
+  - Key press (shortcut, arrow key)
+  - State transition (selection change, gizmo release, play/stop)
+  - One-time events (load, save, error)
+
+- **Do not**:
+  - Print in an **infinite loop** or every frame (e.g. in the main/render loop).
+  - Print at **time or frame intervals** (e.g. every N seconds or every N frames).
+
+**In short:** Print every time the user performs a discrete action (e.g. mouse click or other explicit action). Never use continuous or interval-based prints.
+
 ## Date
-Created: 2024
+Created: 2024 | Updated: 2026-03-09
 
 ## Core Principle
 
@@ -122,6 +138,11 @@ if (currentTime - lastPrintTime > 2.0f) {
 5. **Viewport Selection** (`main.cpp` line 1154)
    - Prints when model is selected in viewport
    - Action: Mouse click in viewport
+
+6. **Outliner Selection Change** (`outliner.cpp`)
+   - Logs to Logger (Debug panel) when the selected element changes (outliner click, viewport click, or arrow key)
+   - Action: Selection change (not every frame)
+   - Uses static variable to track last logged element; logs only on transition
 
 ### Needs Review ⚠️
 

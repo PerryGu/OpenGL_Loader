@@ -416,127 +416,170 @@ void Application::handleSceneEvents() {
             m_scene.resetClearSceneRequest();
         }
 
-        //-- if new file requested, load it and add to collection ------------ 
+        //-- Check for async loading completion (polling mechanism) ----
+        // This checks if a background loading task has completed and finalizes the model
+        // GPU resource creation happens here on the main thread
+        if (m_modelManager.checkAsyncLoadStatus()) {
+            // A model was just finalized, get its index and continue with initialization
+            // The model index is the last one in the collection
+            int modelIndex = static_cast<int>(m_modelManager.getModelCount() - 1);
+            
+            if (modelIndex >= 0) {
+                // Get the file path from the model instance
+                ModelInstance* instance = m_modelManager.getModel(modelIndex);
+                if (instance) {
+                    std::string filePath = instance->filePath;
+                    
+                    // Continue with post-loading initialization (same as synchronous loading)
+                    initializeLoadedModel(modelIndex, filePath);
+                }
+            }
+        }
+        
+        //-- if new file requested, start async loading ------------ 
         if (m_scene.isNewFileRequested()) {
             std::string filePath = m_scene.getFilePath();
             if (filePath != "") {
-                // Load model into manager (adds to collection, doesn't replace)
-                int modelIndex = m_modelManager.loadModel(filePath);
+                // Start async loading (non-blocking, returns immediately)
+                // All file I/O (fread, ofbx::load) happens in background thread
+                int modelIndex = m_modelManager.loadModelAsync(filePath);
                 
                 if (modelIndex >= 0) {
-                    ModelInstance* instance = m_modelManager.getModel(modelIndex);
-                    if (instance) {
-                        // Initialize bounding box for the newly loaded model
-                        instance->boundingBox.init();
-                        instance->initializeBoundingBox();
-                        
-                        std::string file_extension = instance->model.getFileExtension();
-                        if (file_extension == ".fbx") {
-                            m_scene.getUIManager().getOutliner().loadFBXfile(filePath);
-                            
-                            // Get RootNode name (renamed if collision detected)
-                            std::string rootNodeName = m_scene.getUIManager().getOutliner().getRootNodeName(modelIndex);
-                            
-                            // Get rig root name (if available)
-                            std::string rigRootName = m_scene.getUIManager().getOutliner().getRigRootName(modelIndex);
-                            
-                            // CRITICAL FIX: Automatically select the newly loaded model and its RootNode
-                            // This ensures initialization runs immediately for the new model
-                            // Without this, if Model 0 is still selected, Model 1 won't initialize properly
-                            m_modelManager.setSelectedModel(modelIndex);
-                            
-                            // Get RootNode name - declare outside if block so it's available for later use
-                            std::string newModelRootNode = m_scene.getUIManager().getOutliner().getRootNodeName(modelIndex);
-                            
-                            // Safety check: Ensure scene was loaded successfully before selecting
-                            const ofbx::IScene* loadedScene = m_scene.getUIManager().getOutliner().getScene(modelIndex);
-                            if (loadedScene != nullptr && !newModelRootNode.empty()) {
-                                m_scene.getUIManager().getOutliner().setSelectionToRoot(modelIndex);
-                            }
-                            
-                            // CRITICAL FIX: Reset model's pos/rotation/size to identity immediately after loading
-                            // This ensures the model starts at (0,0,0) regardless of previous models
-                            // Without this, new models would inherit transforms from previously loaded models
-                            // PropertyPanel RootNode transforms control the model position exclusively
-                            instance->model.pos = glm::vec3(0.0f, 0.0f, 0.0f);
-                            instance->model.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);  // Identity quaternion
-                            instance->model.size = glm::vec3(1.0f, 1.0f, 1.0f);
-                            
-                            // CRITICAL FIX: Initialize RootNode transforms in PropertyPanel to (0,0,0)
-                            // This ensures RootNode always starts at center, regardless of previous models
-                            // Each model has its own RootNode entry in PropertyPanel (e.g., "RootNode", "RootNode01")
-                            // Only initialize if we have a valid RootNode name
-                            if (!newModelRootNode.empty()) {
-                                auto rootTransIt = m_scene.getUIManager().getPropertyPanel().getAllBoneTranslations().find(newModelRootNode);
-                                if (rootTransIt == m_scene.getUIManager().getPropertyPanel().getAllBoneTranslations().end()) {
-                                    // RootNode not found - initialize it to (0,0,0)
-                                    // This is the normal case for a newly loaded model
-                                    ModelInstance* instance = m_modelManager.getModel(modelIndex);
-                                    Model* modelPtr = instance ? &instance->model : nullptr;
-                                    m_scene.getUIManager().getPropertyPanel().setSelectedNode(newModelRootNode, modelPtr);
-                                    m_scene.getUIManager().getPropertyPanel().initializeRootNodeFromModel(
-                                        glm::vec3(0.0f, 0.0f, 0.0f),  // Always start at origin
-                                        glm::quat(1.0f, 0.0f, 0.0f, 0.0f),  // Identity rotation
-                                        glm::vec3(1.0f, 1.0f, 1.0f)  // Identity scale
-                                    );
-                                } else {
-                                    // RootNode already exists (shouldn't happen for new model, but reset it anyway)
-                                    // This can occur if a model is reloaded or if there's a name collision
-                                    ModelInstance* instance = m_modelManager.getModel(modelIndex);
-                                    Model* modelPtr = instance ? &instance->model : nullptr;
-                                    m_scene.getUIManager().getPropertyPanel().setSelectedNode(newModelRootNode, modelPtr);
-                                    m_scene.getUIManager().getPropertyPanel().initializeRootNodeFromModel(
-                                        glm::vec3(0.0f, 0.0f, 0.0f),  // Always start at origin
-                                        glm::quat(1.0f, 0.0f, 0.0f, 0.0f),  // Identity rotation
-                                        glm::vec3(1.0f, 1.0f, 1.0f)  // Identity scale
-                                    );
-                                }
-                                
-                                // Restore selection to RootNode (user expects to see RootNode selected)
-                                m_scene.getUIManager().getOutliner().setSelectionToRoot(modelIndex);
-                                ModelInstance* instance = m_modelManager.getModel(modelIndex);
-                                Model* modelPtr = instance ? &instance->model : nullptr;
-                                m_scene.getUIManager().getPropertyPanel().setSelectedNode(newModelRootNode, modelPtr);
-                            }
-                        }
-
-                        //-- get FPS of the file (for UI display, but each model has its own) -------------
-                        m_FPS = instance->FPS;
-                        
-                        //-- set time slider max to animation duration (use longest duration) -------------
-                        float animDuration = instance->model.getAnimationDuration();
-                        
-                        // Update slider to show longest animation duration across all models
-                        float maxDuration = animDuration;
-                        for (size_t i = 0; i < m_modelManager.getModelCount(); i++) {
-                            ModelInstance* m = m_modelManager.getModel(static_cast<int>(i));
-                            if (m) {
-                                float d = m->model.getAnimationDuration();
-                                if (d > maxDuration) maxDuration = d;
-                            }
-                        }
-                        
-                        LOG_INFO("Model " + std::to_string(modelIndex) + " loaded - Animation Duration: " + std::to_string(animDuration) + ", FPS: " + std::to_string(m_FPS));
-                        if (maxDuration > 0.0f) {
-                            m_scene.getUIManager().getTimeSlider().setMaxTimeSlider(maxDuration);
-                            LOG_INFO("Set time slider max to: " + std::to_string(maxDuration) + " (longest duration)");
-                        } else {
-                            LOG_WARNING("No animation duration found!");
-                        }
-                        
-                        // Add to recent files after successful load
-                        // Note: Path sanitization is handled inside addRecentFile() using std::filesystem
-                        AppSettingsManager::getInstance().addRecentFile(filePath);
-                        
-                        m_file_is_open = true;
-                    }
+                    // Loading started successfully, will be finalized in checkAsyncLoadStatus()
+                    LOG_INFO("[Application] Started async loading: " + filePath);
+                    // UI initialization will happen in main loop after async load completes
                 } else {
-                    LOG_ERROR("Failed to load model from " + filePath);
+                    LOG_ERROR("[Application] Failed to start async loading: " + filePath);
                 }
                 
-                m_scene.resetNewFileRequest();  // Reset flag after file is loaded
-            }    
+                // Reset the file request flag immediately (don't wait for load to complete)
+                m_scene.resetNewFileRequest();
+            }
         }
+}
+
+// Helper to initialize a loaded model (outliner, property panel, FPS, TimeSlider, etc.)
+// Called after async loading completes and GPU resources are created
+// NOTE: Bounding box initialization is already done in checkAsyncLoadStatus()
+void Application::initializeLoadedModel(int modelIndex, const std::string& filePath) {
+    ModelInstance* instance = m_modelManager.getModel(modelIndex);
+    if (!instance) {
+        LOG_ERROR("[Application] initializeLoadedModel: Invalid model index " + std::to_string(modelIndex));
+        return;
+    }
+    
+    std::string file_extension = instance->model.getFileExtension();
+    if (file_extension == ".fbx") {
+        // Use pre-loaded FBX scene and pre-calculated rig root from background thread
+        // No file I/O, ofbx::load, or findRigRoot on main thread
+        if (instance->ofbxScene) {
+            m_scene.getUIManager().getOutliner().addPreloadedFBXScene(
+                instance->ofbxScene, 
+                filePath, 
+                instance->rigRootName  // Pre-calculated in background thread
+            );
+        } else {
+            LOG_ERROR("[Application] FBX scene not loaded in background thread for: " + filePath);
+        }
+        
+        // Get RootNode name (renamed if collision detected)
+        std::string rootNodeName = m_scene.getUIManager().getOutliner().getRootNodeName(modelIndex);
+        
+        // Get rig root name (if available)
+        std::string rigRootName = m_scene.getUIManager().getOutliner().getRigRootName(modelIndex);
+        
+        // CRITICAL FIX: Automatically select the newly loaded model and its RootNode
+        // This ensures initialization runs immediately for the new model
+        // Without this, if Model 0 is still selected, Model 1 won't initialize properly
+        m_modelManager.setSelectedModel(modelIndex);
+        
+        // Get RootNode name - declare outside if block so it's available for later use
+        std::string newModelRootNode = m_scene.getUIManager().getOutliner().getRootNodeName(modelIndex);
+        
+        // Safety check: Ensure scene was loaded successfully before selecting
+        const ofbx::IScene* loadedScene = m_scene.getUIManager().getOutliner().getScene(modelIndex);
+        if (loadedScene != nullptr && !newModelRootNode.empty()) {
+            m_scene.getUIManager().getOutliner().setSelectionToRoot(modelIndex);
+        }
+        
+        // CRITICAL FIX: Reset model's pos/rotation/size to identity immediately after loading
+        // This ensures the model starts at (0,0,0) regardless of previous models
+        // Without this, new models would inherit transforms from previously loaded models
+        // PropertyPanel RootNode transforms control the model position exclusively
+        instance->model.pos = glm::vec3(0.0f, 0.0f, 0.0f);
+        instance->model.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);  // Identity quaternion
+        instance->model.size = glm::vec3(1.0f, 1.0f, 1.0f);
+        
+        // CRITICAL FIX: Initialize RootNode transforms in PropertyPanel to (0,0,0)
+        // This ensures RootNode always starts at center, regardless of previous models
+        // Each model has its own RootNode entry in PropertyPanel (e.g., "RootNode", "RootNode01")
+        // Only initialize if we have a valid RootNode name
+        if (!newModelRootNode.empty()) {
+            auto rootTransIt = m_scene.getUIManager().getPropertyPanel().getAllBoneTranslations().find(newModelRootNode);
+            if (rootTransIt == m_scene.getUIManager().getPropertyPanel().getAllBoneTranslations().end()) {
+                // RootNode not found - initialize it to (0,0,0)
+                // This is the normal case for a newly loaded model
+                ModelInstance* instance = m_modelManager.getModel(modelIndex);
+                Model* modelPtr = instance ? &instance->model : nullptr;
+                m_scene.getUIManager().getPropertyPanel().setSelectedNode(newModelRootNode, modelPtr);
+                m_scene.getUIManager().getPropertyPanel().initializeRootNodeFromModel(
+                    glm::vec3(0.0f, 0.0f, 0.0f),  // Always start at origin
+                    glm::quat(1.0f, 0.0f, 0.0f, 0.0f),  // Identity rotation
+                    glm::vec3(1.0f, 1.0f, 1.0f)  // Identity scale
+                );
+            } else {
+                // RootNode already exists (shouldn't happen for new model, but reset it anyway)
+                // This can occur if a model is reloaded or if there's a name collision
+                ModelInstance* instance = m_modelManager.getModel(modelIndex);
+                Model* modelPtr = instance ? &instance->model : nullptr;
+                m_scene.getUIManager().getPropertyPanel().setSelectedNode(newModelRootNode, modelPtr);
+                m_scene.getUIManager().getPropertyPanel().initializeRootNodeFromModel(
+                    glm::vec3(0.0f, 0.0f, 0.0f),  // Always start at origin
+                    glm::quat(1.0f, 0.0f, 0.0f, 0.0f),  // Identity rotation
+                    glm::vec3(1.0f, 1.0f, 1.0f)  // Identity scale
+                );
+            }
+            
+            // Restore selection to RootNode (user expects to see RootNode selected)
+            m_scene.getUIManager().getOutliner().setSelectionToRoot(modelIndex);
+            ModelInstance* instance = m_modelManager.getModel(modelIndex);
+            Model* modelPtr = instance ? &instance->model : nullptr;
+            m_scene.getUIManager().getPropertyPanel().setSelectedNode(newModelRootNode, modelPtr);
+        }
+    }
+
+    //-- get FPS of the file (for UI display, but each model has its own) -------------
+    m_FPS = instance->FPS;
+    
+    //-- set time slider max to animation duration (use longest duration) -------------
+    float animDuration = instance->model.getAnimationDuration();
+    
+    // Update slider to show longest animation duration across all models
+    float maxDuration = animDuration;
+    for (size_t i = 0; i < m_modelManager.getModelCount(); i++) {
+        ModelInstance* m = m_modelManager.getModel(static_cast<int>(i));
+        if (m) {
+            float d = m->model.getAnimationDuration();
+            if (d > maxDuration) maxDuration = d;
+        }
+    }
+    
+    LOG_INFO("Model " + std::to_string(modelIndex) + " loaded - Animation Duration: " + std::to_string(animDuration) + ", FPS: " + std::to_string(m_FPS));
+    if (maxDuration > 0.0f) {
+        m_scene.getUIManager().getTimeSlider().setMaxTimeSlider(maxDuration);
+        LOG_INFO("Set time slider max to: " + std::to_string(maxDuration) + " (longest duration)");
+    } else {
+        LOG_WARNING("No animation duration found!");
+    }
+    
+    // Add to recent files after successful load
+    // Note: Path sanitization is handled inside addRecentFile() using std::filesystem
+    AppSettingsManager& settingsMgr = AppSettingsManager::getInstance();
+    settingsMgr.addRecentFile(filePath);
+    settingsMgr.markDirty();
+    
+    // Mark that a file is open
+    m_file_is_open = true;
 }
 
 void Application::updateAnimations(double fCurrentTime, float fInterval) {
@@ -1069,6 +1112,26 @@ void Application::run() {
         updateCamera();
         handleSceneEvents();
         
+        // Check if async loading has completed and initialize UI
+        // Check if CPU phase is complete (async loading finished)
+        // This adds the model to the collection and starts incremental GPU upload
+        m_modelManager.checkAsyncLoadStatus();
+        
+        // Continue incremental GPU upload (time-sliced, one mesh per frame)
+        // This distributes the 371ms GPU upload across multiple frames to prevent stuttering
+        if (m_modelManager.continueGPUUpload()) {
+            // GPU upload complete, now initialize UI components
+            int lastModelIndex = static_cast<int>(m_modelManager.getModelCount()) - 1;
+            if (lastModelIndex >= 0) {
+                ModelInstance* instance = m_modelManager.getModel(lastModelIndex);
+                if (instance && instance->gpuUploadComplete) {
+                    // Initialize all UI components for the newly loaded model
+                    // This includes: Outliner, PropertyPanel RootNode transforms, FPS, TimeSlider
+                    initializeLoadedModel(lastModelIndex, instance->filePath);
+                }
+            }
+        }
+        
         double fCurrentTime = glfwGetTime();
         float fInterval = static_cast<float>(fCurrentTime - m_f_startTime);
         
@@ -1085,6 +1148,24 @@ void Application::run() {
         m_scene.endViewportRender();
         glfwSwapBuffers(m_window);
         glfwPollEvents();
+        
+        // DEFERRED DELETION: Check for pending deletion and perform actual deletion at end of frame
+        // This happens after rendering and buffer swap, ensuring one frame has passed with zeroed transforms
+        // so ImGui state and rendering matrices have synchronized to the zeroed values
+        int pendingDeleteIndex = m_scene.getPendingDeleteModelIndex();
+        if (pendingDeleteIndex >= 0) {
+            // Perform the actual model deletion
+            m_modelManager.removeModel(pendingDeleteIndex);
+            
+            // Explicitly clear selection state
+            m_modelManager.setSelectedModel(-1);
+            m_scene.getUIManager().getPropertyPanel().setSelectedNode("", nullptr);
+            
+            // Clear the pending deletion flag
+            m_scene.clearPendingDeleteModelIndex();
+            
+            LOG_INFO("Deferred deletion: Model removed after one frame with zeroed transforms");
+        }
         
         m_f_startTime = fCurrentTime;
     }
@@ -1187,13 +1268,20 @@ void Application::processInput(double deltaTime) {
                 // Try to find the node in any of the loaded models
                 bool found = false;
                 for (size_t i = 0; i < m_modelManager.getModelCount(); i++) {
-                    glm::vec3 min, max;
-                    m_modelManager.getNodeBoundingBox(static_cast<int>(i), selectedNode, min, max);
-                    // Check if bounding box is valid (not default)
-                    if (min != glm::vec3(-1.0f) || max != glm::vec3(1.0f)) {
-                        m_cameras[m_activeCam].frameBoundingBox(min, max);
-                        found = true;
-                        break;
+                    ModelInstance* instance = m_modelManager.getModel(static_cast<int>(i));
+                    if (instance) {
+                        // Get bone index from name, then use index-based bounding box
+                        int boneIndex = instance->model.getBoneIndexFromName(selectedNode);
+                        if (boneIndex >= 0) {
+                            glm::vec3 min, max;
+                            m_modelManager.getNodeBoundingBoxByIndex(static_cast<int>(i), boneIndex, min, max);
+                            // Check if bounding box is valid (not default)
+                            if (min != glm::vec3(-1.0f) || max != glm::vec3(1.0f)) {
+                                m_cameras[m_activeCam].frameBoundingBox(min, max);
+                                found = true;
+                                break;
+                            }
+                        }
                     }
                 }
                 if (!found) {

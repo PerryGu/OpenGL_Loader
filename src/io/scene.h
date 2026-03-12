@@ -120,6 +120,14 @@ public:
     // Reset selection tracking (called on deselection)
     void resetSelectionTracking() { mLastSelectedModelIndex = -1; mLastSelectedNode = ""; }
     
+    //-- deferred deletion management -------------------
+    // Set model index pending deferred deletion (called from UI deletion dialog)
+    void setPendingDeleteModelIndex(int modelIndex) { m_pendingDeleteModelIndex = modelIndex; }
+    // Get model index pending deletion (-1 if none)
+    int getPendingDeleteModelIndex() const { return m_pendingDeleteModelIndex; }
+    // Clear pending deletion flag (called after deletion is performed)
+    void clearPendingDeleteModelIndex() { m_pendingDeleteModelIndex = -1; }
+    
     //-- viewport rendering -------------------
     void beginViewportRender();   // Start rendering to the framebuffer
     void endViewportRender();     // End rendering to the framebuffer
@@ -226,6 +234,7 @@ private:
     bool mNewFileRequested = false;  // Flag to signal new file should be loaded
     bool mClearSceneRequested = false;  // Flag to signal scene should be cleared
     bool m_cameraFramingRequested = false;  // Flag to signal camera should frame (auto-focus feature)
+    int m_pendingDeleteModelIndex = -1;  // Model index pending deferred deletion, -1 if none
     
     //-- framebuffer for viewport rendering -------------------
     unsigned int viewportFBO = 0;        // Framebuffer object

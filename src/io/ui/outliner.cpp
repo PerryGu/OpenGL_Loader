@@ -1,5 +1,6 @@
 #include "outliner.h"
 #include "../../utils/logger.h"
+#include "../app_settings.h"
 #include "../keyboard.h"
 #include "../fbx_rig_analyzer.h"
 // CRITICAL: Tell GLFW not to include OpenGL headers (we use GLAD instead)
@@ -25,6 +26,21 @@ void Outliner::outlinerPanel(bool* p_open)
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_None;
     
     ImGui::Begin("Outliner", p_open, window_flags);                          
+
+    //-- Filtering UI (persisted in app_settings.json) -------------
+    AppSettings& st = AppSettingsManager::getInstance().getSettings();
+    bool geometryChanged = ImGui::Checkbox("Geometry", &st.outliner.showGeometry);
+    ImGui::SameLine();
+    bool animationsChanged = ImGui::Checkbox("Animations", &st.outliner.showAnimations);
+    ImGui::SameLine();
+    bool rigChanged = ImGui::Checkbox("Rig & Groups", &st.outliner.showRigGroups);
+    
+    if (geometryChanged || animationsChanged || rigChanged) {
+        clearVisibilityCache();
+        AppSettingsManager::getInstance().saveSettings();
+    }
+    
+    ImGui::Separator();
 
     //-- add attributes-------------- -
     const char* selectedNod_name = mSelectedNod_name.c_str();
@@ -70,7 +86,7 @@ void Outliner::outlinerPanel(bool* p_open)
                 
                 // Display the scene hierarchy (indented under the model name)
                 ImGui::Indent();
-                showObjectsGUI(*sceneData.scene);
+                showObjectsGUI(*sceneData.scene, static_cast<int>(i));
                 ImGui::Unindent();
                 
                 // Add spacing between models for visual separation
@@ -82,8 +98,17 @@ void Outliner::outlinerPanel(bool* p_open)
             }
         }
         
-        if (g_selected_element != nullptr) {
-            std::cout << "element." << g_selected_element << std::endl;
+        // Action-based debug: log only when selection changes (not every frame)
+        {
+            static const ofbx::IElement* s_lastLoggedElement = nullptr;
+            if (g_selected_element != s_lastLoggedElement) {
+                s_lastLoggedElement = g_selected_element;
+                if (g_selected_element != nullptr && !mSelectedNod_name.empty()) {
+                    Logger::getInstance().addLog("INFO", "[Outliner] Selection changed to: " + mSelectedNod_name);
+                } else if (g_selected_element == nullptr) {
+                    Logger::getInstance().addLog("INFO", "[Outliner] Selection cleared");
+                }
+            }
         }
     }
     // Legacy support: also check single scene pointer (for backward compatibility)
@@ -98,45 +123,41 @@ void Outliner::outlinerPanel(bool* p_open)
         // Handle keyboard navigation (arrow keys) - call AFTER Begin() so window is active
         handleKeyboardNavigation();
         
-        showObjectsGUI(*ofbx_scene);
-        if (g_selected_element != nullptr) {
-            std::cout << "element." << g_selected_element << std::endl;
+        // Legacy: Use model index 0 for single scene (backward compatibility)
+        showObjectsGUI(*ofbx_scene, 0);
+        // Action-based debug: log only when selection changes (same as multi-scene path)
+        {
+            static const ofbx::IElement* s_lastLoggedElementLegacy = nullptr;
+            if (g_selected_element != s_lastLoggedElementLegacy) {
+                s_lastLoggedElementLegacy = g_selected_element;
+                if (g_selected_element != nullptr && !mSelectedNod_name.empty()) {
+                    Logger::getInstance().addLog("INFO", "[Outliner] Selection changed to: " + mSelectedNod_name);
+                } else if (g_selected_element == nullptr) {
+                    Logger::getInstance().addLog("INFO", "[Outliner] Selection cleared");
+                }
+            }
         }
     }
   
     ImGui::End();
 }
 
-//-- load the FBX file ---------------------------------- 
-// This method now adds the scene to the collection instead of replacing
-// Multiple FBX files can be loaded and all hierarchies will be displayed
-void Outliner::loadFBXfile(std::string filePath)
+// Add pre-loaded FBX scene (scene loaded in background thread)
+// Takes the pre-loaded scene, filePath, and pre-calculated rig root name
+// Extracts displayName, checks for collisions, and adds to mFBXScenes
+// NOTE: Does NOT perform file I/O, ofbx::load, or findRigRoot - all done in background thread
+void Outliner::addPreloadedFBXScene(ofbx::IScene* scene, const std::string& filePath, const std::string& precalculatedRigRootName)
 {
-    std::cout << "[Outliner] Loading FBX file: " << filePath.c_str() << std::endl;
-    
-    // CRITICAL FIX: Removed the duplicate file path check block here.
-    // We WANT to allow loading the same FBX multiple times for Instancing.
-    // The Outliner already has logic to uniquely rename colliding RootNodes.
-    
-    FILE* fp = fopen(filePath.c_str(), "rb");
-    if (!fp) {
-        std::cout << "[Outliner] ERROR: Failed to open file: " << filePath << std::endl;
-        return;
-    }
-    
-    fseek(fp, 0, SEEK_END);
-    long file_size = ftell(fp);
-    fseek(fp, 0, SEEK_SET);
-    auto* content = new ofbx::u8[file_size];
-    fread(content, 1, file_size, fp);
-    
-    ofbx::IScene* scene = ofbx::load((ofbx::u8*)content, file_size, (ofbx::u64)ofbx::LoadFlags::TRIANGULATE);
     if (!scene) {
-        std::cout << "[Outliner] ERROR: Failed to load FBX scene: " << ofbx::getError() << std::endl;
-        delete[] content;
-        fclose(fp);
+        std::cout << "[Outliner] ERROR: Cannot add null FBX scene" << std::endl;
         return;
     }
+    
+    std::cout << "[Outliner] Adding pre-loaded FBX scene: " << filePath.c_str() << std::endl;
+    
+    // PERFORMANCE OPTIMIZATION: Clear visibility cache when new scene is added
+    // The tree structure changes, so cached results are invalid
+    clearVisibilityCache();
     
     // Extract display name from file path
     std::string displayName = extractFileName(filePath);
@@ -185,14 +206,12 @@ void Outliner::loadFBXfile(std::string filePath)
         }
     }
     
-    // Find and store the rig root (parent container of the rig, e.g., "Rig_GRP")
-    // This is found once per FBX file import and stored for later use
-    // IMPORTANT: Do this BEFORE pushing to vector so the rig root name is stored correctly
-    std::string rigRootName = FBXRigAnalyzer::findRigRoot(scene);
-    sceneData.rigRootName = rigRootName;  // Store rig root name in scene data
+    // Use pre-calculated rig root name (calculated in background thread)
+    // This avoids heavy recursive hierarchy traversal on the main thread
+    sceneData.rigRootName = precalculatedRigRootName;
     
-    if (!rigRootName.empty()) {
-        std::cout << "[Rig Analyzer] Rig Root: '" << rigRootName << "'" << std::endl;
+    if (!precalculatedRigRootName.empty()) {
+        std::cout << "[Rig Analyzer] Rig Root: '" << precalculatedRigRootName << "' (pre-calculated in background thread)" << std::endl;
     } else {
         std::cout << "[Rig Analyzer] No rig root (LIMB_NODE) found in this FBX file" << std::endl;
     }
@@ -207,11 +226,8 @@ void Outliner::loadFBXfile(std::string filePath)
     // Mark that we need to rebuild the selectable objects list
     mNeedsRebuildList = true;
     
-    std::cout << "[Outliner] Successfully loaded FBX scene: " << displayName 
+    std::cout << "[Outliner] Successfully added pre-loaded FBX scene: " << displayName 
               << " (Total scenes: " << mFBXScenes.size() << ")" << std::endl;
-
-    delete[] content;
-    fclose(fp);
 }
 
 //-- clear outliner (remove all loaded scenes) ----
@@ -237,6 +253,12 @@ void Outliner::clear()
     mCurrentSelectionIndex = -1;
     mNeedsRebuildList = true;
     
+    // O(1) Selection Caching: Reset cached model index
+    mSelectedModelIndex = -1;
+    
+    // PERFORMANCE OPTIMIZATION: Clear visibility cache when scenes are cleared
+    clearVisibilityCache();
+    
     std::cout << "[Outliner] Cleared all scenes" << std::endl;
 }
 
@@ -258,6 +280,10 @@ void Outliner::removeFBXScene(int modelIndex)
         
         // Mark that we need to rebuild the selectable objects list
         mNeedsRebuildList = true;
+        
+        // PERFORMANCE OPTIMIZATION: Clear visibility cache when scene is removed
+        // The tree structure changes, so cached results are invalid
+        clearVisibilityCache();
         
         // Clear selection if the deleted model was selected
         clearSelection();
@@ -313,11 +339,50 @@ void Outliner::showGUI(const ofbx::IElement& parent)
 }
 */
 
-void Outliner::showObjectGUI(const ofbx::Object& object)
+void Outliner::showObjectGUI(const ofbx::Object& object, int modelIndex)
 {
+    //-- UI Filtering Logic (visual only, does not modify scene data) -------------
+    // Get the object type and name for filtering
+    ofbx::Object::Type objectType = object.getType();
+    std::string objectName = object.name;
+    
+    // STRICTLY IGNORE animation curves - they are visual clutter and should never be rendered
+    if (objectType == ofbx::Object::Type::ANIMATION_CURVE_NODE || 
+        objectType == ofbx::Object::Type::ANIMATION_CURVE) {
+        return;  // Skip rendering entirely, do not process children
+    }
+    
+    // Check if this is the Rig Root or absolute root (always show)
+    bool isRigRoot = false;
+    if (objectType == ofbx::Object::Type::ROOT) {
+        // Check if it's the absolute root of the file (always show)
+        if (modelIndex >= 0 && modelIndex < static_cast<int>(mFBXScenes.size())) {
+            const FBXSceneData& sceneData = mFBXScenes[modelIndex];
+            if (sceneData.scene && sceneData.scene->getRoot() == &object) {
+                isRigRoot = true;  // Absolute root is always shown
+            }
+        }
+        // Also check if name matches the rig root name (always show)
+        if (!isRigRoot) {
+            std::string rigRootName = getRigRootName(modelIndex);
+            if (!rigRootName.empty() && (objectName == rigRootName || objectName.find(rigRootName) != std::string::npos)) {
+                isRigRoot = true;
+            }
+        }
+    }
+    
+    // If not rig root, apply filtering based on category
+    // Use hasVisibleDescendant to ensure parent nodes remain visible if they contain visible children
+    if (!isRigRoot) {
+        // Check if this node or any of its descendants match the active filters
+        if (!hasVisibleDescendant(&object)) {
+            return;  // Skip this node entirely (no visible descendants)
+        }
+    }
+    
     //std::string selectedNod_name ;
     const char* label = nullptr;
-    switch (object.getType())
+    switch (objectType)
     {
     case ofbx::Object::Type::GEOMETRY: label = "geometry"; break;
     case ofbx::Object::Type::MESH: label = "mesh"; break;
@@ -358,6 +423,9 @@ void Outliner::showObjectGUI(const ofbx::Object& object)
         // If the item wasn't toggled, the click was on the label - select it
         if (!ImGui::IsItemToggledOpen()) {
             g_selected_object = &object;
+            // O(1) Selection Caching: Set cached model index immediately
+            mSelectedModelIndex = modelIndex;
+            
             // Use renamed name if this is a root node with collision
             if (object.getType() == ofbx::Object::Type::ROOT) {
                 mSelectedNod_name = getRootNodeName(&object);
@@ -370,7 +438,7 @@ void Outliner::showObjectGUI(const ofbx::Object& object)
             
             // Update selection index for keyboard navigation
             for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-                if (mSelectableObjects[i] == &object) {
+                if (mSelectableObjects[i].first == &object) {
                     mCurrentSelectionIndex = static_cast<int>(i);
                     break;
                 }
@@ -389,33 +457,34 @@ void Outliner::showObjectGUI(const ofbx::Object& object)
         int i = 0;
         while (ofbx::Object* child = object.resolveObjectLink(i))
         {
-            //std::cout << "child " << child->name << std::endl;
-            //mSelectedNod_name = child->name;
-            showObjectGUI(*child);
+            // Skip animation curves - they are visual clutter and should never be rendered
+            ofbx::Object::Type childType = child->getType();
+            if (childType != ofbx::Object::Type::ANIMATION_CURVE_NODE && 
+                childType != ofbx::Object::Type::ANIMATION_CURVE) {
+                showObjectGUI(*child, modelIndex);
+            }
             ++i;
         }
-        if (object.getType() == ofbx::Object::Type::ANIMATION_CURVE) {
-            showCurveGUI(object);
-        }
+        // Note: showCurveGUI is no longer called since ANIMATION_CURVE is filtered out
 
         ImGui::TreePop();
     }
 }
 
 
-void Outliner::showObjectsGUI(const ofbx::IScene& scene)
+void Outliner::showObjectsGUI(const ofbx::IScene& scene, int modelIndex)
 {
     // Note: ImGui::Begin("Outliner") is already called in outlinerPanel()
     // So we don't call it here - this function just renders the tree content
     const ofbx::Object* root = scene.getRoot();
 
-    if (root) showObjectGUI(*root);
+    if (root) showObjectGUI(*root, modelIndex);
     int count = scene.getAnimationStackCount();
 
     for (int i = 0; i < count; ++i)
     {
         const ofbx::Object* stack = scene.getAnimationStack(i);
-        showObjectGUI(*stack);
+        showObjectGUI(*stack, modelIndex);
     }
 }
 
@@ -472,6 +541,86 @@ std::string Outliner::getRigRootName(int modelIndex) const
     return "";
 }
 
+//-- check if a node or any of its descendants match the active filters ----
+// Returns true if the node itself matches filters OR if any descendant matches
+// This ensures parent nodes (like NULL_NODE groups) remain visible if they contain visible children
+// PERFORMANCE OPTIMIZATION: Uses memoization cache and tree pruning for animation nodes
+bool Outliner::hasVisibleDescendant(const ofbx::Object* node) const
+{
+    if (!node) return false;
+    
+    const auto& out = AppSettingsManager::getInstance().getSettings().outliner;
+    
+    // PERFORMANCE OPTIMIZATION: Check cache first (memoization)
+    // The FBX tree structure is static, so we can cache visibility results
+    auto cacheIt = m_visibilityCache.find(node);
+    if (cacheIt != m_visibilityCache.end()) {
+        return cacheIt->second;
+    }
+    
+    ofbx::Object::Type objectType = node->getType();
+    
+    // PERFORMANCE OPTIMIZATION: Tree pruning for animation nodes
+    // If Animations filter is OFF and this is an animation-specific node, return false immediately
+    // Do NOT recursively check children - a geometry or rig node will never be a child of an animation stack
+    if (!out.showAnimations) {
+        if (objectType == ofbx::Object::Type::ANIMATION_STACK ||
+            objectType == ofbx::Object::Type::ANIMATION_LAYER ||
+            objectType == ofbx::Object::Type::ANIMATION_CURVE_NODE ||
+            objectType == ofbx::Object::Type::ANIMATION_CURVE) {
+            // Cache and return false immediately (no recursion)
+            m_visibilityCache[node] = false;
+            return false;
+        }
+    }
+    
+    // STRICTLY IGNORE animation curves - they should not trigger visibility
+    if (objectType == ofbx::Object::Type::ANIMATION_CURVE_NODE || 
+        objectType == ofbx::Object::Type::ANIMATION_CURVE) {
+        // Skip this node, but still check its children (in case there are other visible descendants)
+        // However, animation curves typically don't have children, so this is mainly for consistency
+    }
+    else {
+        // Check if this node itself matches the active filters (from app_settings)
+        // Geometry category: MESH and GEOMETRY
+        if ((objectType == ofbx::Object::Type::MESH || objectType == ofbx::Object::Type::GEOMETRY) && out.showGeometry) {
+            m_visibilityCache[node] = true;
+            return true;
+        }
+        // Animation category: ONLY ANIMATION_STACK and ANIMATION_LAYER (not curves)
+        if ((objectType == ofbx::Object::Type::ANIMATION_STACK ||
+             objectType == ofbx::Object::Type::ANIMATION_LAYER) && out.showAnimations) {
+            m_visibilityCache[node] = true;
+            return true;
+        }
+        // Rig category: LIMB_NODE and NULL_NODE
+        if ((objectType == ofbx::Object::Type::LIMB_NODE || objectType == ofbx::Object::Type::NULL_NODE) && out.showRigGroups) {
+            m_visibilityCache[node] = true;
+            return true;
+        }
+    }
+    
+    // Recursively check children (skipping animation curves)
+    int i = 0;
+    while (ofbx::Object* child = const_cast<ofbx::Object*>(node)->resolveObjectLink(i)) {
+        // Skip animation curves when checking descendants
+        ofbx::Object::Type childType = child->getType();
+        if (childType != ofbx::Object::Type::ANIMATION_CURVE_NODE && 
+            childType != ofbx::Object::Type::ANIMATION_CURVE) {
+            if (hasVisibleDescendant(child)) {
+                // Cache and return true (found visible descendant)
+                m_visibilityCache[node] = true;
+                return true;
+            }
+        }
+        ++i;
+    }
+    
+    // Cache and return false (no visible descendants)
+    m_visibilityCache[node] = false;
+    return false;
+}
+
 //-- get the FBX scene for a model index ----
 const ofbx::IScene* Outliner::getScene(int modelIndex) const
 {
@@ -519,10 +668,26 @@ std::string Outliner::generateUniqueRootNodeName(const std::string& baseName) co
 // Recursively searches for an object with the given name
 // Returns pointer to the object if found, nullptr otherwise
 // Handles cases where object names have numeric prefixes (e.g., "1818483895296 Rig_GRP")
+// PERFORMANCE OPTIMIZATION: Prunes heavy node types to prevent traversing massive hierarchies
 const ofbx::Object* Outliner::findObjectByName(const ofbx::Object* object, const std::string& name) const
 {
     if (!object) {
         return nullptr;
+    }
+    
+    // PERFORMANCE FIX: Prune heavy node types at the very beginning
+    // These objects can have massive hierarchies that cause severe lag when traversed
+    ofbx::Object::Type objType = object->getType();
+    if (objType == ofbx::Object::Type::ANIMATION_STACK ||
+        objType == ofbx::Object::Type::ANIMATION_LAYER ||
+        objType == ofbx::Object::Type::ANIMATION_CURVE_NODE ||
+        objType == ofbx::Object::Type::ANIMATION_CURVE ||
+        objType == ofbx::Object::Type::MATERIAL ||
+        objType == ofbx::Object::Type::TEXTURE ||
+        objType == ofbx::Object::Type::SKIN ||
+        objType == ofbx::Object::Type::CLUSTER ||
+        objType == ofbx::Object::Type::NODE_ATTRIBUTE) {
+        return nullptr;  // Skip this object and don't traverse its children
     }
     
     std::string objectName = std::string(object->name);
@@ -581,6 +746,9 @@ void Outliner::setSelectionToRoot(int modelIndex)
             const ofbx::Object* root = mFBXScenes[modelIndex].scene->getRoot();
             if (root) {
                 g_selected_object = root;
+                // O(1) Selection Caching: Set cached model index immediately
+                mSelectedModelIndex = modelIndex;
+                
                 // Use the renamed RootNode name (e.g., "RootNode01" if collision detected)
                 mSelectedNod_name = mFBXScenes[modelIndex].getRootNodeName();
                 
@@ -592,7 +760,7 @@ void Outliner::setSelectionToRoot(int modelIndex)
                 
                 // Update selection index for keyboard navigation
                 for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-                    if (mSelectableObjects[i] == root) {
+                    if (mSelectableObjects[i].first == root) {
                         mCurrentSelectionIndex = static_cast<int>(i);
                         break;
                     }
@@ -614,11 +782,14 @@ void Outliner::setSelectionToRoot(int modelIndex)
         const ofbx::Object* root = mFBXScenes[0].scene->getRoot();
         if (root) {
             g_selected_object = root;
+            // O(1) Selection Caching: Set cached model index to 0 (first scene)
+            mSelectedModelIndex = 0;
+            
             mSelectedNod_name = mFBXScenes[0].getRootNodeName();
             
             // Update selection index for keyboard navigation
             for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-                if (mSelectableObjects[i] == root) {
+                if (mSelectableObjects[i].first == root) {
                     mCurrentSelectionIndex = static_cast<int>(i);
                     break;
                 }
@@ -633,6 +804,16 @@ void Outliner::setSelectionToRoot(int modelIndex)
         const ofbx::Object* root = ofbx_scene->getRoot();
         if (root) {
             g_selected_object = root;
+            // O(1) Selection Caching: Find model index for legacy scene
+            int foundIndex = -1;
+            for (size_t i = 0; i < mFBXScenes.size(); ++i) {
+                if (mFBXScenes[i].scene == ofbx_scene) {
+                    foundIndex = static_cast<int>(i);
+                    break;
+                }
+            }
+            mSelectedModelIndex = foundIndex;
+            
             // Find the scene data for this root
             for (const auto& sceneData : mFBXScenes) {
                 if (sceneData.scene == ofbx_scene) {
@@ -647,7 +828,7 @@ void Outliner::setSelectionToRoot(int modelIndex)
             
             // Update selection index for keyboard navigation
             for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-                if (mSelectableObjects[i] == root) {
+                if (mSelectableObjects[i].first == root) {
                     mCurrentSelectionIndex = static_cast<int>(i);
                     break;
                 }
@@ -662,6 +843,8 @@ void Outliner::clearSelection()
     g_selected_object = nullptr;
     mSelectedNod_name = "";
     mCurrentSelectionIndex = -1;
+    // O(1) Selection Caching: Reset cached model index
+    mSelectedModelIndex = -1;
 }
 
 void Outliner::setSelectionToNode(int modelIndex, const std::string& nodeName)
@@ -690,11 +873,14 @@ void Outliner::setSelectionToNode(int modelIndex, const std::string& nodeName)
         bool selectionChanged = (g_selected_object != foundObject || mSelectedNod_name != foundObject->name);
         
         g_selected_object = foundObject;
+        // O(1) Selection Caching: Set cached model index immediately
+        mSelectedModelIndex = modelIndex;
+        
         mSelectedNod_name = foundObject->name;
         
         // Update selection index for keyboard navigation
         for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-            if (mSelectableObjects[i] == foundObject) {
+            if (mSelectableObjects[i].first == foundObject) {
                 mCurrentSelectionIndex = static_cast<int>(i);
                 break;
             }
@@ -721,12 +907,15 @@ void Outliner::rebuildSelectableObjectsList()
     mCurrentSelectionIndex = -1;
     
     // Collect selectable objects from all loaded scenes
-    for (const auto& sceneData : mFBXScenes) {
+    for (size_t sceneIdx = 0; sceneIdx < mFBXScenes.size(); ++sceneIdx) {
+        const auto& sceneData = mFBXScenes[sceneIdx];
         if (sceneData.scene) {
+            int modelIndex = static_cast<int>(sceneIdx);
+            
             // Collect all selectable objects from root
             const ofbx::Object* root = sceneData.scene->getRoot();
             if (root) {
-                collectSelectableObjects(*root);
+                collectSelectableObjects(*root, modelIndex);
             }
             
             // Collect all selectable objects from animation stacks
@@ -734,7 +923,7 @@ void Outliner::rebuildSelectableObjectsList()
             for (int i = 0; i < count; ++i) {
                 const ofbx::Object* stack = sceneData.scene->getAnimationStack(i);
                 if (stack) {
-                    collectSelectableObjects(*stack);
+                    collectSelectableObjects(*stack, modelIndex);
                 }
             }
         }
@@ -743,7 +932,7 @@ void Outliner::rebuildSelectableObjectsList()
     // Find current selection index
     if (g_selected_object) {
         for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-            if (mSelectableObjects[i] == g_selected_object) {
+            if (mSelectableObjects[i].first == g_selected_object) {
                 mCurrentSelectionIndex = static_cast<int>(i);
                 break;
             }
@@ -759,10 +948,13 @@ void Outliner::rebuildSelectableObjectsList(const ofbx::IScene& scene)
     mSelectableObjects.clear();
     mCurrentSelectionIndex = -1;
     
+    // Legacy: Use model index 0 for single scene (backward compatibility)
+    int modelIndex = 0;
+    
     // Collect all selectable objects from root
     const ofbx::Object* root = scene.getRoot();
     if (root) {
-        collectSelectableObjects(*root);
+        collectSelectableObjects(*root, modelIndex);
     }
     
     // Collect all selectable objects from animation stacks
@@ -770,14 +962,14 @@ void Outliner::rebuildSelectableObjectsList(const ofbx::IScene& scene)
     for (int i = 0; i < count; ++i) {
         const ofbx::Object* stack = scene.getAnimationStack(i);
         if (stack) {
-            collectSelectableObjects(*stack);
+            collectSelectableObjects(*stack, modelIndex);
         }
     }
     
     // Find current selection index
     if (g_selected_object) {
         for (size_t i = 0; i < mSelectableObjects.size(); ++i) {
-            if (mSelectableObjects[i] == g_selected_object) {
+            if (mSelectableObjects[i].first == g_selected_object) {
                 mCurrentSelectionIndex = static_cast<int>(i);
                 break;
             }
@@ -786,24 +978,40 @@ void Outliner::rebuildSelectableObjectsList(const ofbx::IScene& scene)
 }
 
 //-- collect selectable objects recursively --------------------
-void Outliner::collectSelectableObjects(const ofbx::Object& object)
+// PERFORMANCE OPTIMIZATION: Prunes heavy node types to prevent traversing massive hierarchies
+void Outliner::collectSelectableObjects(const ofbx::Object& object, int modelIndex)
 {
+    // PERFORMANCE FIX: Prune heavy node types at the very beginning
+    // These objects can have massive hierarchies that cause severe lag when traversed
+    ofbx::Object::Type objType = object.getType();
+    if (objType == ofbx::Object::Type::ANIMATION_STACK ||
+        objType == ofbx::Object::Type::ANIMATION_LAYER ||
+        objType == ofbx::Object::Type::ANIMATION_CURVE_NODE ||
+        objType == ofbx::Object::Type::ANIMATION_CURVE ||
+        objType == ofbx::Object::Type::MATERIAL ||
+        objType == ofbx::Object::Type::TEXTURE ||
+        objType == ofbx::Object::Type::SKIN ||
+        objType == ofbx::Object::Type::CLUSTER ||
+        objType == ofbx::Object::Type::NODE_ATTRIBUTE) {
+        return;  // Skip this object and don't traverse its children
+    }
+    
     // Add this object to the list (only selectable objects like limb nodes, meshes, etc.)
     // Filter out animation curve nodes and other non-selectable items
-    ofbx::Object::Type objType = object.getType();
     if (objType == ofbx::Object::Type::LIMB_NODE || 
         objType == ofbx::Object::Type::MESH ||
         objType == ofbx::Object::Type::GEOMETRY ||
         objType == ofbx::Object::Type::ROOT ||
         objType == ofbx::Object::Type::NULL_NODE ||
         objType == ofbx::Object::Type::ANIMATION_STACK) {
-        mSelectableObjects.push_back(&object);
+        // O(1) Selection Caching: Store pair of (object, modelIndex) for instant lookup
+        mSelectableObjects.push_back(std::make_pair(&object, modelIndex));
     }
     
     // Recursively collect children
     int i = 0;
     while (ofbx::Object* child = const_cast<ofbx::Object*>(&object)->resolveObjectLink(i)) {
-        collectSelectableObjects(*child);
+        collectSelectableObjects(*child, modelIndex);
         ++i;
     }
 }
@@ -860,7 +1068,10 @@ void Outliner::handleKeyboardNavigation()
     
     // Update selection
     if (mCurrentSelectionIndex >= 0 && mCurrentSelectionIndex < static_cast<int>(mSelectableObjects.size())) {
-        g_selected_object = mSelectableObjects[mCurrentSelectionIndex];
+        // O(1) Selection Caching: Get object and model index from pair
+        g_selected_object = mSelectableObjects[mCurrentSelectionIndex].first;
+        mSelectedModelIndex = mSelectableObjects[mCurrentSelectionIndex].second;
+        
         if (g_selected_object) {
             mSelectedNod_name = g_selected_object->name;
             // Trigger selection callback so Auto-Focus and Gizmo update immediately
@@ -891,9 +1102,24 @@ std::string Outliner::extractFileName(const std::string& path)
 //-- find which model index a selected object belongs to ----
 // Helper function to recursively search for an object in a scene's hierarchy
 // Returns true if the target object is found in the subtree starting from the given object
+// PERFORMANCE OPTIMIZATION: Prunes animation-related objects from search tree to prevent
+// traversing massive animation curve graphs, which causes 3-second selection lag
 static bool findObjectInHierarchy(const ofbx::Object* startObject, const ofbx::Object* targetObject)
 {
     if (!startObject || !targetObject) {
+        return false;
+    }
+    
+    // PERFORMANCE FIX: Prune animation-related objects from search tree
+    // These objects can have massive hierarchies (thousands of animation curves)
+    // that cause severe lag when recursively traversed
+    ofbx::Object::Type objType = startObject->getType();
+    if (objType == ofbx::Object::Type::ANIMATION_STACK ||
+        objType == ofbx::Object::Type::ANIMATION_LAYER ||
+        objType == ofbx::Object::Type::ANIMATION_CURVE_NODE ||
+        objType == ofbx::Object::Type::ANIMATION_CURVE ||
+        objType == ofbx::Object::Type::MATERIAL ||
+        objType == ofbx::Object::Type::TEXTURE) {
         return false;
     }
     
@@ -916,34 +1142,11 @@ static bool findObjectInHierarchy(const ofbx::Object* startObject, const ofbx::O
 
 // Searches through all loaded scenes to find which one contains the selected object
 // Returns the index of the model (matching ModelManager index), or -1 if not found
-// CRITICAL: Now searches the entire hierarchy, not just root nodes
-// This ensures bones and other nodes can be correctly identified to their owning model
+// PERFORMANCE OPTIMIZATION: O(1) cached lookup - simply returns the cached model index
+// The model index is set immediately when an object is selected, eliminating O(N) recursive search
 int Outliner::findModelIndexForSelectedObject() const
 {
-    if (!g_selected_object) {
-        return -1;
-    }
-    
-    // Search through all loaded scenes to find which one contains the selected object
-    for (size_t i = 0; i < mFBXScenes.size(); ++i) {
-        if (mFBXScenes[i].scene) {
-            const ofbx::Object* root = mFBXScenes[i].scene->getRoot();
-            if (root) {
-                // Check if the selected object is the root (fast path)
-                if (root == g_selected_object) {
-                    return static_cast<int>(i);
-                }
-                
-                // CRITICAL: Recursively search the entire hierarchy to find bones and other nodes
-                // This ensures that selecting a bone in 'Character_B' correctly identifies its model
-                // even if 'Character_A' was previously selected
-                if (findObjectInHierarchy(root, g_selected_object)) {
-                    return static_cast<int>(i);
-                }
-            }
-        }
-    }
-    
-    return -1;
+    // O(1) Selection Caching: Return cached model index (set when object is selected)
+    return mSelectedModelIndex;
 }
 

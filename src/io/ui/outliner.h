@@ -5,6 +5,7 @@
 #include <sstream>
 #include <vector>
 #include <functional>
+#include <unordered_map>
 #include <glm/glm.hpp>
 #include <inttypes.h>
 #include <iostream>
@@ -79,13 +80,17 @@ public:
     const ofbx::IElement* g_selected_element = nullptr;
     const ofbx::Object* g_selected_object = nullptr;
 
-    void loadFBXfile(std::string filePath);
+    // Add pre-loaded FBX scene (scene loaded in background thread)
+    // Takes the pre-loaded scene, filePath, and pre-calculated rig root name
+    // Extracts displayName, checks for collisions, and adds to mFBXScenes
+    // NOTE: Does NOT perform file I/O, ofbx::load, or findRigRoot - all done in background thread
+    void addPreloadedFBXScene(ofbx::IScene* scene, const std::string& filePath, const std::string& precalculatedRigRootName);
     
     // Remove a specific scene by index (when a model is removed)
     void removeFBXScene(int modelIndex);
     //void showGUI(const ofbx::IElement& parent);
-    void showObjectGUI(const ofbx::Object& object);
-    void showObjectsGUI(const ofbx::IScene& scene);
+    void showObjectGUI(const ofbx::Object& object, int modelIndex);
+    void showObjectsGUI(const ofbx::IScene& scene, int modelIndex);
     static void showCurveGUI(const ofbx::Object& object);
     std::string getSelectedNode();
     
@@ -153,14 +158,18 @@ private:
     std::vector<FBXSceneData> mFBXScenes;  // Vector of all loaded FBX scenes
     
     // For arrow key navigation
-    std::vector<const ofbx::Object*> mSelectableObjects;  // Flat list of all selectable objects in order
+    // O(1) Selection Caching: Store pairs of (object, modelIndex) for instant lookup
+    std::vector<std::pair<const ofbx::Object*, int>> mSelectableObjects;  // Flat list of all selectable objects with their model indices
     int mCurrentSelectionIndex = -1;  // Index of currently selected object in the list
     bool mNeedsRebuildList = true;  // Flag to rebuild the list when scene changes
+    
+    // O(1) Selection Caching: Cached model index for selected object (eliminates O(N) recursive search)
+    int mSelectedModelIndex = -1;  // Model index of currently selected object (-1 if none selected)
     
     // Helper methods for navigation
     void rebuildSelectableObjectsList();  // Rebuilds list from all scenes
     void rebuildSelectableObjectsList(const ofbx::IScene& scene);  // Rebuilds from single scene (legacy)
-    void collectSelectableObjects(const ofbx::Object& object);
+    void collectSelectableObjects(const ofbx::Object& object, int modelIndex);
     void handleKeyboardNavigation();
     
     // Helper to extract filename from path
@@ -172,11 +181,27 @@ private:
     // Helper to generate a unique root node name (e.g., "RootNode01", "RootNode02", etc.)
     std::string generateUniqueRootNodeName(const std::string& baseName) const;
     
+    // Helper to check if a node or any of its descendants match the active filters
+    // Returns true if the node itself matches filters OR if any descendant matches
+    // This ensures parent nodes (like NULL_NODE groups) remain visible if they contain visible children
+    bool hasVisibleDescendant(const ofbx::Object* node) const;
+    
     // Callback function for selection change (used for auto-focus)
     std::function<void()> mSelectionChangeCallback;
     
     // Viewport hover state (enables keyboard navigation from viewport)
     bool m_viewportHovered = false;
+    
+    // Outliner filter state is persisted in AppSettings (outliner.showGeometry, showAnimations, showRigGroups)
+    // and used in outlinerPanel() checkboxes and in shouldShowNode() / hasVisibleDescendant().
+    
+    // PERFORMANCE OPTIMIZATION: Visibility cache for hasVisibleDescendant results
+    // The FBX tree structure is static, so we can cache visibility results
+    // Cache is cleared when filters change
+    mutable std::unordered_map<const ofbx::Object*, bool> m_visibilityCache;
+    
+    // Clear the visibility cache (called when filters change)
+    void clearVisibilityCache() { m_visibilityCache.clear(); }
 };
 
 #endif

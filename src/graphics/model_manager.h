@@ -8,7 +8,11 @@
 #include <memory>
 #include <cmath>
 #include <map>
+#include "ofbx.h"  // For ofbx::IScene
 #include <glm/glm.hpp>
+#include <future>
+#include <mutex>
+#include <atomic>
 
 //-- Structure to hold a model instance with its own animation state
 struct ModelInstance {
@@ -33,6 +37,27 @@ struct ModelInstance {
     std::vector<glm::mat4> cachedBoneTransforms;
     bool boneTransformsCached = false;
     
+    // Benchmark instancing: Store offsets for lightweight rendering instancing
+    // Instead of loading multiple models from disk, we render the same model multiple times
+    // at different positions. This is memory-efficient and prevents Outliner overload.
+    std::vector<glm::vec3> benchmarkOffsets;
+    
+    // Random seeds for each benchmark instance (for real-time randomization)
+    // Each seed is a vec3 with values between -1.0 and 1.0, used to generate
+    // consistent randomization that can be scaled by jitter sliders
+    // seed.x = X position jitter direction
+    // seed.y = Z position jitter direction (also used for rotation jitter)
+    // seed.z = scale jitter direction (uniform scale)
+    // Note: Y position is locked to 0.0f to keep characters on the ground
+    std::vector<glm::vec3> instanceRandomSeeds;
+    
+    // Hardware instancing: GPU-side instancing for benchmark tool
+    unsigned int instanceVBO = 0;  // VBO for instance matrices
+    std::vector<glm::mat4> instanceMatrices;  // Instance transformation matrices
+    
+    // Setup hardware instancing with instance matrices
+    void setupInstancing(const std::vector<glm::mat4>& matrices);
+    
     // Constructor
     ModelInstance() 
         : animationTime(0.0f), totalTime(0.0f), FPS(1), 
@@ -55,7 +80,12 @@ struct ModelInstance {
           lastUpdateTime(other.lastUpdateTime),
           boundingBox(std::move(other.boundingBox)),
           cachedBoneTransforms(std::move(other.cachedBoneTransforms)),
-          boneTransformsCached(other.boneTransformsCached) {
+          boneTransformsCached(other.boneTransformsCached),
+          benchmarkOffsets(std::move(other.benchmarkOffsets)),
+          instanceRandomSeeds(std::move(other.instanceRandomSeeds)),
+          instanceVBO(other.instanceVBO),
+          instanceMatrices(std::move(other.instanceMatrices)) {
+        other.instanceVBO = 0;
     }
     
     // Move assignment operator
@@ -72,6 +102,11 @@ struct ModelInstance {
             boundingBox = std::move(other.boundingBox);
             cachedBoneTransforms = std::move(other.cachedBoneTransforms);
             boneTransformsCached = other.boneTransformsCached;
+            benchmarkOffsets = std::move(other.benchmarkOffsets);
+            instanceRandomSeeds = std::move(other.instanceRandomSeeds);
+            instanceVBO = other.instanceVBO;
+            instanceMatrices = std::move(other.instanceMatrices);
+            other.instanceVBO = 0;
         }
         return *this;
     }
@@ -86,17 +121,38 @@ struct ModelInstance {
     }
     
     /**
-     * Initialize bounding box after loading
+     * Calculate bounding box in background thread (CPU-bound)
+     * Stores the result to be applied later in GPU phase
+     */
+    void calculateBoundingBoxAsync() {
+        model.getBoundingBox(preCalculatedBoundingBoxMin, preCalculatedBoundingBoxMax);
+    }
+    
+    /**
+     * Initialize bounding box after loading (GPU phase)
      * 
-     * Calculates the initial bounding box from the model's geometry
+     * Uses pre-calculated bounding box from calculateBoundingBoxAsync()
      * and updates the bounding box instance. This is called automatically
      * when a model is loaded.
      */
     void initializeBoundingBox() {
-        glm::vec3 min, max;
-        model.getBoundingBox(min, max);
-        boundingBox.update(min, max);
+        boundingBox.update(preCalculatedBoundingBoxMin, preCalculatedBoundingBoxMax);
     }
+    
+    // Pre-calculated bounding box (calculated in background thread)
+    glm::vec3 preCalculatedBoundingBoxMin = glm::vec3(-1.0f);
+    glm::vec3 preCalculatedBoundingBoxMax = glm::vec3(1.0f);
+    
+    // Pre-loaded FBX scene (loaded in background thread, used for Outliner)
+    ofbx::IScene* ofbxScene = nullptr;
+    
+    // Pre-calculated rig root name (calculated in background thread, avoids heavy traversal on main thread)
+    std::string rigRootName;
+    
+    // GPU upload progress tracking (for time-sliced incremental uploading)
+    int meshesUploadedToGPU = 0;      // Number of meshes that have been uploaded to GPU
+    int texturesUploadedToGPU = 0;    // Number of textures that have been uploaded to GPU
+    bool gpuUploadComplete = false;   // True when all meshes and textures are uploaded
     
     // Update animation time (for auto-play)
     void updateAnimation(double currentTime, float deltaTime) {
@@ -160,9 +216,21 @@ public:
     ModelManager();
     ~ModelManager();
     
-    // Load a new model and add it to the collection
-    // Returns the index of the newly loaded model, or -1 on failure
-    int loadModel(const std::string& filePath);
+    // Start async loading of a model (non-blocking)
+    // Returns the index that will be assigned to the model, or -1 if loading is already in progress
+    // Call checkAsyncLoadStatus() in the main loop to poll for completion
+    int loadModelAsync(const std::string& filePath);
+    
+    // Check if async loading has completed and finalize the model (GPU resource creation)
+    // Returns true if a model was finalized, false otherwise
+    // Must be called on the main thread (OpenGL context required)
+    bool checkAsyncLoadStatus();
+    
+    // Continue incremental GPU upload (time-sliced, one mesh per frame)
+    // Returns true when GPU upload is complete and ready for UI initialization
+    // Must be called on the main thread (OpenGL context required)
+    // Call this EXACTLY ONCE per frame until it returns true
+    bool continueGPUUpload();
     
     // Remove a model by index
     void removeModel(int index);
@@ -198,9 +266,6 @@ public:
     // Get bounding box for a specific model
     void getModelBoundingBox(int index, glm::vec3& min, glm::vec3& max);
     
-    // Get bounding box for a specific node in a specific model (DEPRECATED - use index-based version)
-    void getNodeBoundingBox(int modelIndex, const std::string& nodeName, glm::vec3& min, glm::vec3& max);
-    
     // Get bounding box for a specific bone by index in a specific model (OPTIMIZED - zero string operations)
     void getNodeBoundingBoxByIndex(int modelIndex, int boneIndex, glm::vec3& min, glm::vec3& max);
     
@@ -227,6 +292,26 @@ public:
     int getSelectedModelIndex() const { return mSelectedModelIndex; }
     ModelInstance* getSelectedModel();  // Get the currently selected model instance
     
+    // Benchmark tools
+    // Spawn a grid of model instances from one or more source models (for stress testing).
+    // Each grid cell picks a random source from sourceIndices; each model keeps its own instance matrices.
+    // Uses hardware instancing per model. Clears all instance data before spawning to prevent ghost instances.
+    void spawnBenchmarkGrid(const std::vector<int>& sourceIndices, int rows, int cols, float spacing);
+    
+    // Clear benchmark models (removes all models except the original source models)
+    // Keeps models at indices 0 to (originalCount - 1), removes all others
+    void clearBenchmarkModels();
+    
+    // Update instance buffers for all models with benchmark instances
+    void updateInstanceBuffers();
+    
+    // Update benchmark instance matrices with real-time randomization
+    // Recalculates instance matrices based on jitter values and random seeds
+    // posJitter: Position jitter amount (scales random seed.x, y, z for position)
+    // rotJitter: Rotation jitter amount (scales random seed.y for Y-axis rotation)
+    // scaleJitter: Scale jitter amount (scales random seed.z for uniform scale)
+    void updateBenchmarkMatrices(float posJitter, float rotJitter, float scaleJitter);
+    
 private:
     std::vector<std::unique_ptr<ModelInstance>> models;  // Collection of model instances (using unique_ptr to avoid moving)
     
@@ -241,6 +326,26 @@ private:
     
     // Helper to extract filename from path
     std::string extractFileName(const std::string& path);
+    
+    // Async loading state
+    struct AsyncLoadTask {
+        std::string filePath;
+        std::future<int> future;  // Future that returns model index when CPU phase completes
+        int assignedIndex;         // Index that will be assigned to the model
+        bool cpuPhaseComplete;    // True when CPU phase is done, ready for GPU phase
+        std::unique_ptr<ModelInstance> instance;  // Model instance (created after CPU phase)
+        
+        AsyncLoadTask() : assignedIndex(-1), cpuPhaseComplete(false) {}
+    };
+    
+    std::unique_ptr<AsyncLoadTask> m_pendingLoadTask;  // Currently pending async load (only one at a time)
+    std::mutex m_loadMutex;  // Mutex for thread-safe access to loading state
+    std::atomic<bool> m_isLoading;  // Atomic flag to prevent concurrent loading
+    
+    // Temporary storage for model during incremental GPU upload (prevents render race condition)
+    // Model is NOT added to active models collection until GPU upload is 100% complete
+    std::unique_ptr<ModelInstance> m_pendingGPUUploadInstance;
+    int m_pendingGPUUploadIndex = -1;  // Index that will be assigned when upload completes
 };
 
 #endif // MODEL_MANAGER_H

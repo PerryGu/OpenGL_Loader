@@ -42,6 +42,10 @@
  */
 
 #include "model.h"
+#include "texture.h"  // For PreDecodedImageData
+
+// Forward declaration for stbi_image_free (implementation is in texture.cpp)
+extern "C" void stbi_image_free(void* retval_from_stbi_load);
 #include "../utils/logger.h"
 #include "raycast.h"  // For Ray and Raycast namespace
 #include "../io/app_settings.h"  // For AppSettingsManager (skeleton line width)
@@ -210,6 +214,105 @@ void Model::render(Shader shader, const glm::mat4* customModelMatrix) {
     }
     
     // Always reset polygon mode to prevent affecting other rendered objects (e.g., ImGui UI)
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+}
+
+// Render model using hardware instancing
+void Model::renderInstanced(Shader& shader, int count) {
+    // Don't render if model is empty (no meshes)
+    if (meshes.empty() || count <= 0) {
+        return;
+    }
+    
+    // Set model uniform to identity - instance matrices will be used instead
+    shader.setMat4("model", glm::mat4(1.0f));
+    
+    // Set shader uniforms (same as regular render)
+    shader.setFloat("material.shininess", 0.5f);
+    shader.setInt("flipNormals", m_flipNormals ? 1 : 0);
+    shader.setInt("useDefaultMaterial", m_useDefaultMaterial ? 1 : 0);
+    
+    // Set polygon mode for wireframe rendering
+    if (m_wireframeMode) {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+    } else {
+        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    }
+    
+    // Render all meshes with instancing
+    for (const Mesh& mesh : meshes) {
+        // Safety check: Don't render if VAO is not initialized
+        if (mesh.VAO == 0) {
+            continue;
+        }
+        
+        // Check if mesh has at least one valid diffuse texture
+        bool hasValidDiffuse = false;
+        for (size_t i = 0; i < mesh.textures.size(); i++) {
+            if (mesh.textures[i].type == aiTextureType_DIFFUSE && mesh.textures[i].id > 0) {
+                hasValidDiffuse = true;
+                break;
+            }
+        }
+        shader.setInt("hasDiffuseTexture", hasValidDiffuse ? 1 : 0);
+        
+        // Handle textures (same logic as Mesh::render)
+        if (mesh.getNoTex()) {
+            shader.set4Float("material.diffuse", mesh.diffuse);
+            shader.set4Float("material.specular", mesh.specular);
+            shader.setInt("noTex", 1);
+        } else {
+            static const char* diffuseNames[] = { "diffuse0", "diffuse1", "diffuse2", "diffuse3", "diffuse4", "diffuse5", "diffuse6", "diffuse7" };
+            static const char* specularNames[] = { "specular0", "specular1", "specular2", "specular3", "specular4", "specular5", "specular6", "specular7" };
+            
+            unsigned int diffuseIdx = 0;
+            unsigned int specularIdx = 0;
+            unsigned int textureUnit = 0;
+            
+            for (unsigned int i = 0; i < mesh.textures.size(); i++) {
+                if (mesh.textures[i].id == 0 || textureUnit >= 16) {
+                    continue;
+                }
+                
+                const char* name = nullptr;
+                switch (mesh.textures[i].type) {
+                case aiTextureType_DIFFUSE:
+                    if (diffuseIdx < 8) {
+                        name = diffuseNames[diffuseIdx++];
+                    } else {
+                        continue;
+                    }
+                    break;
+                case aiTextureType_SPECULAR:
+                    if (specularIdx < 8) {
+                        name = specularNames[specularIdx++];
+                    } else {
+                        continue;
+                    }
+                    break;
+                default:
+                    continue;
+                }
+                
+                glActiveTexture(GL_TEXTURE0 + textureUnit);
+                shader.setInt(name, textureUnit);
+                mesh.textures[i].bind();
+                textureUnit++;
+            }
+            shader.setInt("noTex", 0);
+        }
+        
+        // Bind VAO and render instanced
+        // Note: Instance VBO should already be bound to this VAO from setupInstancing
+        glBindVertexArray(mesh.VAO);
+        // Instance attributes (locations 5-8) are already set up in setupInstancing
+        glDrawElementsInstanced(GL_TRIANGLES, static_cast<GLsizei>(mesh.indices.size()), GL_UNSIGNED_INT, 0, count);
+        glBindVertexArray(0);
+        
+        glActiveTexture(GL_TEXTURE0);
+    }
+    
+    // Always reset polygon mode
     glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
 }
 
@@ -746,8 +849,218 @@ void Model::loadModel(std::string path) {
 
 }
 
+// Load model with deferred GPU resource creation (for async loading)
+// 
+// CPU PHASE (Background Thread): This function runs ENTIRELY in a background thread.
+// All CPU-bound operations are performed here:
+//   - File I/O (Assimp::Importer::ReadFile)
+//   - Scene parsing and mesh extraction (processNode, processMesh)
+//   - Vertex/index/bone weight extraction from aiMesh structures
+//   - Skeletal hierarchy processing (processRig, buildNodeToBoneCache, flattenHierarchy)
+//   - Image decoding (stbi_load) for textures
+//   - Bounding box calculation (iterating over vertices)
+//   - Population of std::vector<Mesh> and std::vector<Texture>
+// 
+// CRITICAL: This function MUST NOT call any OpenGL functions (gl*)
+// All OpenGL resource creation (VAOs, VBOs, textures) is deferred to createGPUResources()
+// which runs on the main thread with a valid OpenGL context.
+//
+// Execution flow:
+// 1. Background thread: loadModelAsync() -> loadModel() -> processRig() -> processNode() -> processMesh()
+//    - processRig(): Builds bone mapping, caches, and flattens hierarchy (CPU-bound)
+//    - processNode(): Recursively processes aiNode structures (CPU-bound)
+//    - processMesh(): Extracts vertices, indices, bone weights from aiMesh (CPU-bound)
+//    - processMesh() creates Mesh objects with deferSetup=true (NO glGenVertexArrays, glGenBuffers)
+//    - processMesh() calls loadTextures() which creates Texture objects with deferredSetup=true (NO glGenTextures)
+//    - loadTextures() calls decodeImageData() which uses stbi_load (CPU-bound, NO OpenGL calls)
+// 2. Main thread: createGPUResources() is called after background thread completes
+//    - Creates all OpenGL resources (VAOs, VBOs, textures) on main thread
+//    - Uses pre-extracted vertex/index data and pre-decoded image data
+void Model::loadModelAsync(std::string path) {
+    // Set flag to defer GPU resource creation
+    m_deferGPUResources = true;
+    
+    // Perform ALL CPU-bound loading (file I/O, Assimp parsing, mesh extraction, bone processing)
+    // This will:
+    //   - Parse the Assimp scene (mIporter.ReadFile)
+    //   - Process rig and build skeletal caches (processRig, buildNodeToBoneCache, flattenHierarchy)
+    //   - Extract all mesh data (processNode, processMesh) - vertices, indices, bone weights
+    //   - Decode all texture images (stbi_load)
+    //   - Populate meshes and textures vectors
+    // BUT will NOT create any OpenGL resources (deferred until GPU phase)
+    loadModel(path);
+    
+    // Note: GPU resources will be created later by calling createGPUResources() on main thread
+}
+
+// Create GPU resources for meshes (must be called on main thread with OpenGL context)
+// 
+// GPU PHASE (Main Thread): This function runs EXCLUSIVELY on the main thread.
+// It performs ONLY OpenGL resource creation using pre-processed data from the CPU phase.
+// 
+// CRITICAL: This function MUST NOT perform any CPU-bound operations:
+//   - NO iteration over aiNode or aiMesh structures
+//   - NO std::vector population (vertices/indices already populated in background thread)
+//   - NO image decoding (stbi_load) - uses pre-decoded image data
+//   - NO bounding box calculation (uses pre-calculated values)
+//   - NO skeletal hierarchy traversal (already processed in background thread)
+// 
+// This function ONLY:
+//   - Creates OpenGL resources (glGenVertexArrays, glGenBuffers, glGenTextures)
+//   - Uploads pre-extracted vertex/index data to GPU (glBufferData)
+//   - Uploads pre-decoded image data to GPU (glTexImage2D)
+//   - Sets up vertex attribute pointers (glVertexAttribPointer)
+//   - Links texture IDs to mesh objects (simple pointer/ID copying)
+//
+// Call this after loadModelAsync() completes in the background thread.
+void Model::createGPUResources() {
+    // First, create GPU resources for all textures that were deferred
+    // Iterate through textures_loaded and upload any textures that have pre-decoded data
+    for (Texture& tex : textures_loaded) {
+        if (tex.id == 0) {
+            // Texture was created with deferred setup, now create OpenGL resources
+            tex.generate();
+            
+            // Check if texture has pre-decoded image data (from background thread)
+            if (tex.preDecodedData.isValid()) {
+                // Fast GPU upload using pre-decoded data (no CPU-intensive decoding)
+                if (!tex.uploadToGPU(tex.preDecodedData)) {
+                    LOG_ERROR("[Model] Failed to upload texture to GPU: " + tex.path);
+                    // If upload failed, delete the invalid texture ID
+                    if (tex.id > 0) {
+                        glDeleteTextures(1, &tex.id);
+                        tex.id = 0;
+                    }
+                    // Note: preDecodedData will be automatically freed by shared_ptr when it goes out of scope
+                }
+            } else {
+                // No pre-decoded data (texture decode failed in background thread)
+                // Try loading now as fallback (should rarely happen)
+                LOG_WARNING("[Model] Texture has no pre-decoded data, attempting fallback load: " + tex.path);
+                if (!tex.load(false)) {
+                    LOG_ERROR("[Model] Failed to load texture: " + tex.path);
+                    // If loading failed, delete the invalid texture ID
+                    if (tex.id > 0) {
+                        glDeleteTextures(1, &tex.id);
+                        tex.id = 0;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Link texture IDs to mesh objects (fast pointer/ID copying, no CPU processing)
+    // This is a lightweight operation that just copies OpenGL texture IDs from textures_loaded
+    // to the mesh texture references. All texture data was already decoded in the background thread.
+    for (Mesh& mesh : meshes) {
+        for (Texture& meshTex : mesh.textures) {
+            if (meshTex.id == 0) {
+                // Find matching texture in textures_loaded (simple string comparison)
+                bool found = false;
+                for (const Texture& loadedTex : textures_loaded) {
+                    if (loadedTex.path == meshTex.path && loadedTex.dir == meshTex.dir && loadedTex.id > 0) {
+                        // Copy only the OpenGL texture ID (fast, no data copying)
+                        meshTex.id = loadedTex.id;
+                        found = true;
+                        break;
+                    }
+                }
+                // Warn if texture wasn't found (shouldn't happen in normal flow)
+                if (!found) {
+                    LOG_WARNING("[Model] Mesh texture not found in textures_loaded: " + meshTex.path + " (dir: " + meshTex.dir + ")");
+                }
+            }
+        }
+        // Create GPU resources for the mesh (VAOs, VBOs, etc.)
+        // Uses pre-extracted vertex/index data from background thread
+        mesh.createGPUResources();
+    }
+    
+    // Reset flag
+    m_deferGPUResources = false;
+}
+
+// Time-sliced incremental GPU upload (uploads one mesh per call)
+// Returns true when all meshes and textures are uploaded, false otherwise
+// Must be called on main thread with valid OpenGL context
+// Call this EXACTLY ONCE per frame until it returns true
+bool Model::uploadNextMeshToGPU(int& meshesUploaded, int& texturesUploaded) {
+    // First, upload textures incrementally (one texture per call until all are done)
+    if (texturesUploaded < static_cast<int>(textures_loaded.size())) {
+        // Upload next texture
+        Texture& tex = textures_loaded[texturesUploaded];
+        if (tex.id == 0) {
+            // Texture was created with deferred setup, now create OpenGL resources
+            tex.generate();
+            
+            // Check if texture has pre-decoded image data (from background thread)
+            if (tex.preDecodedData.isValid()) {
+                // Fast GPU upload using pre-decoded data (no CPU-intensive decoding)
+                if (!tex.uploadToGPU(tex.preDecodedData)) {
+                    LOG_ERROR("[Model] Failed to upload texture to GPU: " + tex.path);
+                    // If upload failed, delete the invalid texture ID
+                    if (tex.id > 0) {
+                        glDeleteTextures(1, &tex.id);
+                        tex.id = 0;
+                    }
+                    // Note: preDecodedData will be automatically freed by shared_ptr when it goes out of scope
+                }
+            } else {
+                // No pre-decoded data (texture decode failed in background thread)
+                // Try loading now as fallback (should rarely happen)
+                LOG_WARNING("[Model] Texture has no pre-decoded data, attempting fallback load: " + tex.path);
+                if (!tex.load(false)) {
+                    LOG_ERROR("[Model] Failed to load texture: " + tex.path);
+                    // If loading failed, delete the invalid texture ID
+                    if (tex.id > 0) {
+                        glDeleteTextures(1, &tex.id);
+                        tex.id = 0;
+                    }
+                }
+            }
+        }
+        texturesUploaded++;
+        return false; // Not complete yet, more textures or meshes to upload
+    }
+    
+    // All textures uploaded, now upload meshes incrementally (one mesh per call)
+    if (meshesUploaded < static_cast<int>(meshes.size())) {
+        // Link texture IDs to this mesh (fast pointer/ID copying, no CPU processing)
+        Mesh& mesh = meshes[meshesUploaded];
+        for (Texture& meshTex : mesh.textures) {
+            if (meshTex.id == 0) {
+                // Find matching texture in textures_loaded (simple string comparison)
+                bool found = false;
+                for (const Texture& loadedTex : textures_loaded) {
+                    if (loadedTex.path == meshTex.path && loadedTex.dir == meshTex.dir && loadedTex.id > 0) {
+                        // Copy only the OpenGL texture ID (fast, no data copying)
+                        meshTex.id = loadedTex.id;
+                        found = true;
+                        break;
+                    }
+                }
+                // Warn if texture wasn't found (shouldn't happen in normal flow)
+                if (!found) {
+                    LOG_WARNING("[Model] Mesh texture not found in textures_loaded: " + meshTex.path + " (dir: " + meshTex.dir + ")");
+                }
+            }
+        }
+        
+        // Create GPU resources for this mesh (VAOs, VBOs, etc.)
+        mesh.createGPUResources();
+        meshesUploaded++;
+        return false; // Not complete yet, more meshes to upload
+    }
+    
+    // All textures and meshes uploaded
+    m_deferGPUResources = false;
+    return true; // Complete!
+}
 
 //-- process node in object file ----------------------------
+// CPU-BOUND: This function runs in the background thread during loadModelAsync().
+// It recursively traverses the Assimp scene hierarchy and extracts mesh data.
+// NO OpenGL calls are made here - all GPU resource creation is deferred.
 void Model::processNode(aiNode* node, const aiScene* mScene) {
 
     m_Entries.resize(mScene->mNumMeshes);
@@ -769,6 +1082,10 @@ void Model::processNode(aiNode* node, const aiScene* mScene) {
 
 
 //-- process mesh in assimp file --------------------------
+// CPU-BOUND: This function runs in the background thread during loadModelAsync().
+// It extracts vertex data, indices, bone weights, and textures from aiMesh structures.
+// All std::vector population happens here (vertices, indices, textures).
+// NO OpenGL calls are made here - Mesh is created with deferSetup=true.
 Mesh Model::processMesh(const aiMesh* mesh, const aiScene* mScene) {
 
     LOG_INFO("[processMesh] Processing mesh: '" + std::string(mesh->mName.C_Str()) + "'");
@@ -837,7 +1154,7 @@ Mesh Model::processMesh(const aiMesh* mesh, const aiScene* mScene) {
             aiColor4D  spec(1.0f);
             aiGetMaterialColor(material, AI_MATKEY_COLOR_SPECULAR, &spec);
 
-            return Mesh(vertices, indices, diff, spec);
+            return Mesh(vertices, indices, diff, spec, m_deferGPUResources);
         }
         */
         //-- use Textures -----------
@@ -1010,30 +1327,8 @@ Mesh Model::processMesh(const aiMesh* mesh, const aiScene* mScene) {
         }
     }
 
-    //********************************************************
-    /*
-   // Debug output removed for professional build
-   for (unsigned int i = 0; i < vertices.size(); i++) {
-      // Debug output removed for professional build
-      //std::cout << " pos >>>> " << vertices[i].pos.x << " | " << vertices[i].pos.y << " | " << vertices[i].pos.z << std::endl;
-      // Debug output removed for professional build
-
-     //if (vertices[i].boneWeights.y >= 0.5) {
-    //if (vertices[i].pos.y > 0.1) {
-    //    std::cout << " YYYYY >>>> " <<  std::endl;
-    //    std::cout << " boneWeights >>>> " << vertices[i].boneWeights.x << " | " << vertices[i].boneWeights.y << " | " << vertices[i].boneWeights.z << " | " << vertices[i].boneWeights.w << std::endl;
-    //    std::cout << " pos >>>> " << vertices[i].pos.x << " | " << vertices[i].pos.y << " | " << vertices[i].pos.z << std::endl;
-       }
-    //
-    */
-    //}
-     //********************************************************
-     //-- create bone hirerchy --------------
-     //readSkeleton(mSkeleton, scene->mRootNode, boneInfo);
-     //mSkeleton_list.push_back(mSkeleton);
-
-
-    return Mesh(vertices, indices, textures);
+    // Use deferred setup if in async loading mode (GPU resources created later on main thread)
+    return Mesh(vertices, indices, textures, m_deferGPUResources);
 }
 
 //-- load list of textures (for each mesh) ------------------------------
@@ -1049,23 +1344,51 @@ std::vector<Texture> Model::loadTextures(aiMaterial* mat, aiTextureType type) {
         bool skip = false;
         for (unsigned int j = 0; j < textures_loaded.size(); j++) {
             if (std::strcmp(textures_loaded[j].path.data(), str.C_Str()) == 0) {
-                // Only reuse texture if it has a valid ID (successfully loaded)
-                if (textures_loaded[j].id > 0) {
+                if (m_deferGPUResources) {
+                    // In deferred mode, reuse texture even if id == 0 (not loaded yet)
+                    // This prevents duplicate texture entries during async loading
                     textures.push_back(textures_loaded[j]);
                     skip = true;
                     break;
+                } else {
+                    // In immediate mode, only reuse texture if it has a valid ID (successfully loaded)
+                    if (textures_loaded[j].id > 0) {
+                        textures.push_back(textures_loaded[j]);
+                        skip = true;
+                        break;
+                    }
+                    // If texture failed to load before, try loading it again
                 }
-                // If texture failed to load before, try loading it again
             }
         }
 
         if (!skip) {
             //-- not loaded yet ------------------
-            Texture tex(directory, str.C_Str(), type);
-            // Only add texture if loading succeeded (ID will be > 0)
-            if (tex.load(false) && tex.id > 0) {
-                textures.push_back(tex);
-                textures_loaded.push_back(tex);
+            // CRITICAL: When m_deferGPUResources is true, this constructor will NOT call generate()
+            // and we will NOT call load(), ensuring ZERO OpenGL calls in background thread
+            Texture tex(directory, str.C_Str(), type, m_deferGPUResources);
+            
+            if (m_deferGPUResources) {
+                // Deferred mode: Decode image data in background thread (CPU-bound, no OpenGL calls)
+                // This moves the heavy stbi_load operation off the main thread
+                PreDecodedImageData preDecodedData;
+                if (tex.decodeImageData(preDecodedData, false)) {
+                    // Store pre-decoded data in texture object using move semantics
+                    tex.preDecodedData = std::move(preDecodedData);
+                    textures.push_back(tex);
+                    textures_loaded.push_back(tex);
+                } else {
+                    // Image decode failed, but still add texture (will fail gracefully in GPU phase)
+                    textures.push_back(tex);
+                    textures_loaded.push_back(tex);
+                }
+            } else {
+                // Immediate mode: Load texture now (OpenGL calls happen here on main thread)
+                // Only add texture if loading succeeded (ID will be > 0)
+                if (tex.load(false) && tex.id > 0) {
+                    textures.push_back(tex);
+                    textures_loaded.push_back(tex);
+                }
             }
         }
     }
@@ -1083,6 +1406,10 @@ std::string Model::getFileExtension()
 //-- RIG & ANIMATION STUFF --------------------------------------------------------------------------
 // 
 //-- processRig --------------------------------------------------------------------------------------
+// CPU-BOUND: This function runs in the background thread during loadModelAsync().
+// It processes the skeletal hierarchy, builds bone mappings, caches, and flattens the hierarchy.
+// All CPU-intensive operations (buildNodeToBoneCache, flattenHierarchy) happen here.
+// NO OpenGL calls are made here.
 void Model::processRig(const aiScene* mScene)
 {
     LOG_INFO("** processRig ***");
@@ -1169,7 +1496,7 @@ void Model::processRig(const aiScene* mScene)
         }
     }
     
-    // Populate bone name to linear index cache (for getBoundingBoxForNode optimization)
+    // Populate bone name to linear index cache (for getBoneIndexFromName optimization)
     m_BoneNameToLinearIndexCache.clear();
     for (size_t i = 0; i < m_linearSkeleton.size(); i++) {
         const LinearBone& linearBone = m_linearSkeleton[i];
@@ -1614,6 +1941,8 @@ void Model::updateLinearSkeleton(float AnimationTime, UI_data ui_data)
 
 
 //-- Build node-to-bone index cache by traversing scene hierarchy ---------------------------------
+// CPU-BOUND: Recursively builds node-to-bone index cache (runs in background thread)
+// This eliminates string lookups in the hot path during animation updates.
 void Model::buildNodeToBoneCache(const aiNode* pNode)
 {
     if (pNode == nullptr) {
@@ -1638,6 +1967,8 @@ void Model::buildNodeToBoneCache(const aiNode* pNode)
 }
 
 //-- Flatten hierarchy into linear structure (called during load time) ----------------------------
+// CPU-BOUND: Recursively flattens the scene hierarchy into a linear structure (runs in background thread)
+// This enables O(1) bone lookups and linear iteration during animation updates.
 void Model::flattenHierarchy(const aiNode* pNode, int parentIdx)
 {
     if (pNode == nullptr) {
@@ -2545,6 +2876,11 @@ size_t Model::getPolygonCount() const {
     return totalPolygons;
 }
 
+//-- get total bone/joint count ----
+unsigned int Model::getBoneCount() const {
+    return mNumBones;
+}
+
 //-- get bounding box for all meshes ----
 void Model::getBoundingBox(glm::vec3& min, glm::vec3& max) {
     if (meshes.empty() || !mScene) {
@@ -2789,26 +3125,6 @@ void Model::printBoneGlobalTransforms() const
 }
 
 //-- get bounding box for a specific node by name (DEPRECATED - use index-based version) ----
-void Model::getBoundingBoxForNode(const std::string& nodeName, glm::vec3& min, glm::vec3& max) {
-    // LOG: Track bounding box requests (only print when node name changes)
-    static std::string lastLoggedNodeName = "";
-    static int lastLoggedBoneIndex = -999;
-    int boneIndex = getBoneIndexFromName(nodeName);
-    if (lastLoggedNodeName != nodeName || lastLoggedBoneIndex != boneIndex) {
-        LOG_INFO("LOG: Bounding Box requested for Node: " + nodeName + " (BoneIndex: " + std::to_string(boneIndex) + ")");
-        lastLoggedNodeName = nodeName;
-        lastLoggedBoneIndex = boneIndex;
-    }
-    
-    // Convert name to index and call optimized version
-    if (boneIndex >= 0) {
-        getBoundingBoxForBoneIndex(boneIndex, min, max);
-    } else {
-        // Node not found or not a bone, fallback to all bones
-        getBoundingBox(min, max);
-    }
-}
-
 //-- get bounding box for a specific bone by index (OPTIMIZED - zero string operations) ----
 void Model::getBoundingBoxForBoneIndex(int boneIndex, glm::vec3& min, glm::vec3& max) {
     // CRITICAL PERFORMANCE FIX: Index-based calculation with ZERO string operations

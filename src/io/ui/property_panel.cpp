@@ -504,3 +504,38 @@ void PropertyPanel::updateBoneScale(Model* model, int boneIndex, const glm::vec3
     if (model == nullptr || boneIndex < 0) return;
     model->updateBoneScaleByIndex(boneIndex, scale);
 }
+
+//-- zero out transforms for a specific node by name (for deferred deletion) --------------------------------
+void PropertyPanel::zeroNodeTransforms(const std::string& nodeName)
+{
+    if (nodeName.empty()) return;
+    
+    // Zero out the transforms in the bone maps
+    mBoneRotations[nodeName] = glm::vec3(0.0f, 0.0f, 0.0f);
+    mBoneTranslations[nodeName] = glm::vec3(0.0f, 0.0f, 0.0f);
+    mBoneScales[nodeName] = glm::vec3(1.0f, 1.0f, 1.0f);
+    
+    // If this node is currently selected, also update the slider values
+    if (mSelectedNod_name == nodeName) {
+        mSliderRotations = glm::vec3(0.0f, 0.0f, 0.0f);
+        mSliderTranslations = glm::vec3(0.0f, 0.0f, 0.0f);
+        mSliderScales = glm::vec3(1.0f, 1.0f, 1.0f);
+    }
+}
+
+//-- set RootNode translation directly by node name (for benchmark tool) --------------------------------
+void PropertyPanel::setRootNodeTranslation(const std::string& rootNodeName, const glm::vec3& translation)
+{
+    if (rootNodeName.empty()) return;
+    
+    // Set translation in bone maps (rotation and scale remain at defaults)
+    mBoneTranslations[rootNodeName] = translation;
+    
+    // Initialize rotation and scale to defaults if not already set
+    if (mBoneRotations.find(rootNodeName) == mBoneRotations.end()) {
+        mBoneRotations[rootNodeName] = glm::vec3(0.0f, 0.0f, 0.0f);
+    }
+    if (mBoneScales.find(rootNodeName) == mBoneScales.end()) {
+        mBoneScales[rootNodeName] = glm::vec3(1.0f, 1.0f, 1.0f);
+    }
+}

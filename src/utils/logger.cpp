@@ -25,6 +25,11 @@ void Logger::clearLogs() {
     m_logs.clear();
 }
 
+std::vector<std::string> Logger::getLogsCopy() const {
+    std::lock_guard<std::mutex> lock(m_mutex);
+    return m_logs;
+}
+
 std::string Logger::getTimestamp() const {
     // Get current time
     auto now = std::chrono::system_clock::now();

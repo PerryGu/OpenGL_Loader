@@ -272,6 +272,22 @@ bool AppSettingsManager::loadSettings(const std::string& filename) {
             // These were legacy settings that are no longer part of EnvironmentSettings
         }
         
+        // Load outliner panel filter checkboxes
+        if (j.contains("outliner")) {
+            auto& out = j["outliner"];
+            if (out.contains("showGeometry")) settings.outliner.showGeometry = out["showGeometry"].get<bool>();
+            if (out.contains("showAnimations")) settings.outliner.showAnimations = out["showAnimations"].get<bool>();
+            if (out.contains("showRigGroups")) settings.outliner.showRigGroups = out["showRigGroups"].get<bool>();
+        }
+        
+        // Load logger panel filter checkboxes
+        if (j.contains("logger")) {
+            auto& log = j["logger"];
+            if (log.contains("showInfo")) settings.logger.showInfo = log["showInfo"].get<bool>();
+            if (log.contains("showWarning")) settings.logger.showWarning = log["showWarning"].get<bool>();
+            if (log.contains("showError")) settings.logger.showError = log["showError"].get<bool>();
+        }
+        
         // Load recent files with existence check
         // This automatically cleans up the list when files are deleted from disk
         settings.recentFiles.clear();
@@ -398,6 +414,16 @@ bool AppSettingsManager::saveSettings(const std::string& filename) {
         
         // Note: smoothCamera, framingPadding, and framingSpeed settings removed
         // These were legacy settings that are no longer part of EnvironmentSettings
+        
+        // Save outliner panel filter checkboxes
+        j["outliner"]["showGeometry"] = settings.outliner.showGeometry;
+        j["outliner"]["showAnimations"] = settings.outliner.showAnimations;
+        j["outliner"]["showRigGroups"] = settings.outliner.showRigGroups;
+        
+        // Save logger panel filter checkboxes
+        j["logger"]["showInfo"] = settings.logger.showInfo;
+        j["logger"]["showWarning"] = settings.logger.showWarning;
+        j["logger"]["showError"] = settings.logger.showError;
         
         // Save recent files with forward slashes for better readability
         j["recentFiles"] = json::array();

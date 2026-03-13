@@ -1064,7 +1064,7 @@ This engine is designed to demonstrate advanced character animation and renderin
 ## Contact & Author
 
 **Perry Guy** - Technical Artist & CG Engineer  
-*Extensive experience in 3D Graphics, Tool Development, and Performance Optimization (Intel, Mobileye).*
+*Extensive experience in 3D Graphics, Tool Development, and Performance Optimization.*
 
 📧 **Email**: [perryguy2@gmail.com](mailto:perryguy2@gmail.com)
 

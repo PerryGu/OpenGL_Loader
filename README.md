@@ -506,46 +506,63 @@ GPU per-vertex bone blending (shader)
 
 ### Architecture Diagram
 
+```mermaid
+flowchart TD
+    %% Main Root
+    APP{"Application (main.cpp)"}
+    
+    %% Branching out forces horizontal layout
+    APP === SCENE
+    APP === GRAPHICS
+    
+    subgraph SCENE ["Scene (IO Layer)"]
+        CAM["Camera<br/>(Controls)"]
+        UI["UI Manager<br/>- Outliner<br/>- Property Panel<br/>- TimeSlider<br/>- Gizmo<br/>- Viewport"]
+        SET["AppSettings<br/>(Persistence)"]
+        
+        CAM ~~~ UI ~~~ SET
+    end
+
+    subgraph GRAPHICS ["ModelManager (Graphics Layer)"]
+        subgraph MINST ["ModelInstance[]"]
+            MOD["Model<br/>(FBX Data)"]
+        end
+        RAY["Raycast<br/>(Selection)"]
+        SHAD["Shader Manager<br/>(Rendering)"]
+        
+        MINST ~~~ RAY ~~~ SHAD
+    end
+
+    %% Bottom Dependencies
+    GL["OpenGL (Rendering)<br/>- Shaders<br/>- VAO/VBO/EBO<br/>- State Mgmt"]
+    GLFW["GLFW (Window)<br/>- Input Events<br/>- Window Mgmt<br/>- Context"]
+    FBX["Assimp/openFBX (FBX Loading)<br/>- Model Parsing<br/>- Bone Hierarchy<br/>- Animation Data"]
+
+    %% Connections to external libraries
+    SCENE ==> GLFW
+    GRAPHICS ==> GL
+    GRAPHICS ==> FBX
+
+    %% Styling (Dark Theme)
+    style APP fill:#2D3748,stroke:#63B3ED,stroke-width:2px,color:#FFFFFF
+    
+    style SCENE fill:none,stroke:#68D391,stroke-width:2px,color:#E2E8F0
+    style GRAPHICS fill:none,stroke:#68D391,stroke-width:2px,color:#E2E8F0
+    style MINST fill:none,stroke:#63B3ED,stroke-width:1px,stroke-dasharray: 5 5,color:#E2E8F0
+    
+    style CAM fill:#253237,stroke:#63B3ED,stroke-width:1px,color:#E2E8F0
+    style UI fill:#253237,stroke:#63B3ED,stroke-width:1px,color:#E2E8F0
+    style SET fill:#253237,stroke:#63B3ED,stroke-width:1px,color:#E2E8F0
+    
+    style MOD fill:#253237,stroke:#63B3ED,stroke-width:1px,color:#E2E8F0
+    style RAY fill:#253237,stroke:#63B3ED,stroke-width:1px,color:#E2E8F0
+    style SHAD fill:#253237,stroke:#63B3ED,stroke-width:1px,color:#E2E8F0
+    
+    style GL fill:#2D3748,stroke:#F6AD55,stroke-width:2px,color:#FFFFFF
+    style GLFW fill:#2D3748,stroke:#F6AD55,stroke-width:2px,color:#FFFFFF
+    style FBX fill:#2D3748,stroke:#F6AD55,stroke-width:2px,color:#FFFFFF
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Application (main.cpp)                       │
-│  ┌──────────────────────┐  ┌─────────────────────────────────┐  │
-│  │   Scene              │  │   ModelManager                  │  │
-│  │   (IO Layer)         │  │   (Graphics Layer)              │  │
-│  │                      │  │                                 │  │
-│  │  ┌────────────────┐  │  │  ┌───────────────────────────┐  │  │
-│  │  │ Camera         │  │  │  │ ModelInstance[]           │  │  │
-│  │  │ (Controls)     │  │  │  │  ┌─────────────────────┐  │  │  │
-│  │  └────────────────┘  │  │  │  │ Model               │  │  │  │
-│  │                      │  │  │  │ (FBX Data)          │  │  │  │
-│  │  ┌────────────────┐  │  │  │  └─────────────────────┘  │  │  │
-│  │  │ UI Manager     │  │  │  └───────────────────────────┘  │  │
-│  │  │  ├─ Outliner   │  │  │                                 │  │
-│  │  │  ├─ Property   │  │  │  ┌───────────────────────────┐  │  │
-│  │  │  │  Panel      │  │  │  │ Raycast                   │  │  │
-│  │  │  ├─ TimeSlider │  │  │  │ (Selection)               │  │  │
-│  │  │  ├─ Gizmo      │  │  │  └───────────────────────────┘  │  │
-│  │  │  └─ Viewport   │  │  │                                 │  │
-│  │  └────────────────┘  │  │  ┌───────────────────────────┐  │  │
-│  │                      │  │  │ Shader Manager            │  │  │
-│  │  ┌────────────────┐  │  │  │ (Rendering)               │  │  │
-│  │  │ AppSettings    │  │  │  └───────────────────────────┘  │  │
-│  │  │ (Persistence)  │  │  └─────────────────────────────────┘  │
-│  │  └────────────────┘  │                                       │
-│  └──────────────────────┘                                       │
-└─────────────────────────────────────────────────────────────────┘
-                              │
-        ┌─────────────────────┼─────────────────────┐
-        │                     │                     │
-┌───────▼────────┐  ┌─────────▼────────┐  ┌─────────▼────────┐
-│ OpenGL         │  │ GLFW             │  │ Assimp/openFBX   │
-│ (Rendering)    │  │ (Window)         │  │ (FBX Loading)    │
-│                │  │                  │  │                  │
-│ - Shaders      │  │ - Input Events   │  │ - Model Parsing  │
-│ - VAO/VBO/EBO  │  │ - Window Mgmt    │  │ - Bone Hierarchy │
-│ - State Mgmt   │  │ - Context        │  │ - Animation Data │
-└────────────────┘  └──────────────────┘  └──────────────────┘
-```
+
 
 ------------------------------------------------------------------------
 

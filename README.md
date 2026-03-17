@@ -101,7 +101,7 @@ cmake --build . --config Release
   <strong>Massive Instance Grid</strong>
 </td>
 <td align="center">
-  <img src="media/benchmark_info_v2.png" alt="Mixed Model Benchmark" width="100%"/>
+  <img src="media/benchmark_info_v3.png" alt="Mixed Model Benchmark" width="100%"/>
   <br/>
   <strong>Mixed Model Instancing</strong>
 </td>

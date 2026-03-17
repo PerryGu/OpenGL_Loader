@@ -96,7 +96,7 @@ cmake --build . --config Release
 <table>
 <tr>
 <td align="center">
-  <img src="media/benchmark_info_v1.png" alt="Hardware Instancing Grid" width="100%"/>
+  <img src="media/benchmark_info_v2.png" alt="Hardware Instancing Grid" width="100%"/>
   <br/>
   <strong>Massive Instance Grid</strong>
 </td>

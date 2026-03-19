@@ -84,7 +84,7 @@ cmake --build . --config Release
   <strong>Spider Model</strong>
 </td>
 <td align="center">
-  <img src="media/walk_anm.gif" alt="Walk Animation" width="100%"/>
+  <img src="media/walk.gif" alt="Walk Animation" width="100%"/>
   <br/>
   <strong>Walk Animation</strong>
 </td>
